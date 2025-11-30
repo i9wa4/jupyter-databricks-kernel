@@ -3,37 +3,41 @@ name = "jupyter-databricks-kernel"
 version = "0.1.0"
 description = "A Jupyter kernel for complete remote execution on Databricks clusters"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11"
 dependencies = [
+    "databricks-sdk>=0.30.0,<1.0.0",
     "ipykernel>=6.20.0",
     "jupyter-client>=8.0.0",
-    "databricks-sdk>=0.30.0,<1.0.0",
     "pyyaml>=6.0",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
     "black>=23.0.0",
-    "ruff>=0.1.0",
+    "flake8>=6.0.0",
+    "isort>=5.0.0",
     "mypy>=1.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest>=7.0.0",
 ]
 
 [tool.black]
 line-length = 88
-target-version = ["py311", "py312"]
 
-[tool.ruff]
-line-length = 88
-target-version = "py311"
-src = ["src", "tests"]
+[tool.isort]
+profile = "black"
+line_length = 88
 
-[tool.ruff.lint]
-select = ["E", "F", "I", "W"]
+[tool.flake8]
+# https://black.readthedocs.io/en/stable/guides/using_black_with_other_tools.html#minimal-configuration
+max-line-length = 88
+extend-exclude = [".venv"]
+extend-ignore = [
+    "E203",
+    "E701",
+]
 
 [tool.mypy]
-python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

@@ -12,5 +12,19 @@
     "schedule": [
       "every weekend"
     ]
-  }
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["pyenv"],
+      "matchPackageNames": ["python"],
+      "allowedVersions": "/^3\\.11\\./",
+      "description": "Python 3.11.x patch updates only for .python-version"
+    },
+    {
+      "matchManagers": ["pep621"],
+      "matchDepNames": ["python"],
+      "enabled": false,
+      "description": "Disable requires-python updates (manual management)"
+    }
+  ]
 }
