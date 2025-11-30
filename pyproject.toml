@@ -16,9 +16,11 @@ dev = [
     "black>=23.0.0",
     "flake8>=6.0.0",
     "isort>=5.0.0",
+    "jupyterlab>=4.0.0",
     "mypy>=1.0.0",
     "pytest-cov>=4.0.0",
     "pytest>=7.0.0",
+    "types-PyYAML>=6.0.0",
 ]
 
 [tool.black]
@@ -41,6 +43,16 @@ extend-ignore = [
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = "ipykernel.*"
+ignore_missing_imports = true
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "jupyter_databricks_kernel.kernel"
+disallow_untyped_calls = false
+warn_unused_ignores = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
