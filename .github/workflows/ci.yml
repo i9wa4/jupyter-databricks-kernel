@@ -90,3 +90,21 @@ jobs:
       - name: Run tests
         run: |
           mise exec -- uv run --python ${{ matrix.python-version }} pytest
+
+  ci:
+    needs: [lint, test]
+    if: always()
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more jobs were cancelled"
+            exit 1
+          fi
+          echo "All checks passed"
