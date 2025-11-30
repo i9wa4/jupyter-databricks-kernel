@@ -30,6 +30,7 @@ class FileSync:
         self.session_id = str(uuid.uuid4())[:8]
         self.last_sync_mtime: float = 0.0
         self._synced = False
+        self._user_name: str | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
         """Ensure the WorkspaceClient is initialized.
@@ -40,6 +41,18 @@ class FileSync:
         if self.client is None:
             self.client = WorkspaceClient()
         return self.client
+
+    def _get_user_name(self) -> str:
+        """Get the current user's email/username.
+
+        Returns:
+            The user's email address.
+        """
+        if self._user_name is None:
+            client = self._ensure_client()
+            me = client.current_user.me()
+            self._user_name = me.user_name or "unknown"
+        return self._user_name
 
     def _get_source_path(self) -> Path:
         """Get the source directory path.
@@ -187,9 +200,11 @@ class FileSync:
         Returns:
             Python code to execute on the remote cluster.
         """
-        # Convert DBFS API path to file path format
-        dbfs_file_path = f"/dbfs{dbfs_path}"
-        extract_dir = dbfs_file_path.replace(".zip", "")
+        # Use /Workspace/Users/{email}/ which is allowed on Shared clusters
+        user_name = self._get_user_name()
+        workspace_extract_dir = (
+            f"/Workspace/Users/{user_name}/jupyter_kernel/{self.session_id}"
+        )
 
         return f"""
 import sys
@@ -197,29 +212,37 @@ import zipfile
 import os
 import shutil
 
-# Extract directory
-_extract_dir = "{extract_dir}"
-_zip_path = "{dbfs_file_path}"
+# Extract to /Workspace/Users/ (allowed on Shared clusters with Unity Catalog)
+_extract_dir = "{workspace_extract_dir}"
+_dbfs_zip_path = "dbfs:{dbfs_path}"
 
 # Remove old extracted directory if exists
 if os.path.exists(_extract_dir):
     shutil.rmtree(_extract_dir)
 
-# Extract zip
+# Create extract directory
 os.makedirs(_extract_dir, exist_ok=True)
-with zipfile.ZipFile(_zip_path, 'r') as zf:
+
+# Copy from DBFS to Workspace and extract
+_local_zip = _extract_dir + "/project.zip"
+dbutils.fs.cp(_dbfs_zip_path, "file:" + _local_zip)
+
+with zipfile.ZipFile(_local_zip, 'r') as zf:
     zf.extractall(_extract_dir)
+
+# Remove local zip file
+os.remove(_local_zip)
 
 # Add to sys.path if not already there
 if _extract_dir not in sys.path:
     sys.path.insert(0, _extract_dir)
 
 # Clean up variables
-del _extract_dir, _zip_path
+del _extract_dir, _dbfs_zip_path, _local_zip
 """
 
     def cleanup(self) -> None:
-        """Clean up DBFS files."""
+        """Clean up DBFS and Workspace files."""
         if not self._synced:
             return
 
@@ -230,3 +253,14 @@ del _extract_dir, _zip_path
             client.dbfs.delete(dbfs_dir, recursive=True)
         except Exception:
             pass  # Ignore cleanup errors
+
+        # Also clean up Workspace directory if user_name is known
+        if self._user_name is not None:
+            workspace_dir = (
+                f"/Workspace/Users/{self._user_name}/jupyter_kernel/{self.session_id}"
+            )
+            try:
+                client = self._ensure_client()
+                client.workspace.delete(workspace_dir, recursive=True)
+            except Exception:
+                pass  # Ignore cleanup errors
