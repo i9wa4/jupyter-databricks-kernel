@@ -5,7 +5,6 @@ from __future__ import annotations
 import fnmatch
 import io
 import os
-import uuid
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,15 +18,16 @@ if TYPE_CHECKING:
 class FileSync:
     """Synchronizes local files to Databricks DBFS."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, session_id: str) -> None:
         """Initialize file sync.
 
         Args:
             config: Kernel configuration.
+            session_id: Session identifier for DBFS paths.
         """
         self.config = config
         self.client: WorkspaceClient | None = None
-        self.session_id = str(uuid.uuid4())[:8]
+        self.session_id = session_id
         self.last_sync_mtime: float = 0.0
         self._synced = False
         self._user_name: str | None = None

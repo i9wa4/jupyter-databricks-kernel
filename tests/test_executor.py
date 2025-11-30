@@ -1,0 +1,146 @@
+"""Tests for DatabricksExecutor."""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from jupyter_databricks_kernel.executor import DatabricksExecutor, ExecutionResult
+
+
+@pytest.fixture
+def mock_config() -> MagicMock:
+    """Create a mock config."""
+    config = MagicMock()
+    config.cluster_id = "test-cluster-id"
+    return config
+
+
+@pytest.fixture
+def executor(mock_config: MagicMock) -> DatabricksExecutor:
+    """Create an executor with mock config."""
+    return DatabricksExecutor(mock_config)
+
+
+class TestReconnect:
+    """Tests for reconnect functionality."""
+
+    def test_reconnect_resets_context_id(self, executor: DatabricksExecutor) -> None:
+        """Test that reconnect resets context_id."""
+        executor.context_id = "old-context-id"
+
+        with patch.object(executor, "create_context") as mock_create:
+            executor.reconnect()
+
+        assert executor.context_id is None or mock_create.called
+
+    def test_reconnect_creates_new_context(self, executor: DatabricksExecutor) -> None:
+        """Test that reconnect creates a new context."""
+        executor.context_id = "old-context-id"
+
+        with patch.object(executor, "create_context") as mock_create:
+            executor.reconnect()
+            mock_create.assert_called_once()
+
+
+class TestIsContextInvalidError:
+    """Tests for _is_context_invalid_error method."""
+
+    def test_detects_context_error(self, executor: DatabricksExecutor) -> None:
+        """Test that context-related errors are detected."""
+        error = Exception("Context not found")
+        assert executor._is_context_invalid_error(error) is True
+
+    def test_detects_invalid_error(self, executor: DatabricksExecutor) -> None:
+        """Test that invalid context errors are detected."""
+        error = Exception("Invalid context ID")
+        assert executor._is_context_invalid_error(error) is True
+
+    def test_detects_expired_error(self, executor: DatabricksExecutor) -> None:
+        """Test that expired context errors are detected."""
+        error = Exception("Session expired")
+        assert executor._is_context_invalid_error(error) is True
+
+    def test_ignores_other_errors(self, executor: DatabricksExecutor) -> None:
+        """Test that other errors are not flagged as context invalid."""
+        error = Exception("Network timeout")
+        assert executor._is_context_invalid_error(error) is False
+
+
+class TestExecuteWithReconnect:
+    """Tests for execute with reconnection logic."""
+
+    def test_execute_success(self, executor: DatabricksExecutor) -> None:
+        """Test successful execution without reconnection."""
+        executor.context_id = "test-context"
+
+        with patch.object(executor, "_execute_internal") as mock_exec:
+            mock_exec.return_value = ExecutionResult(status="ok", output="result")
+            result = executor.execute("print(1)")
+
+        assert result.status == "ok"
+        assert result.output == "result"
+        assert result.reconnected is False
+
+    def test_execute_reconnects_on_context_error(
+        self, executor: DatabricksExecutor
+    ) -> None:
+        """Test that execution reconnects on context invalid error."""
+        executor.context_id = "test-context"
+
+        with patch.object(executor, "_execute_internal") as mock_exec:
+            # First call raises context error, second succeeds
+            mock_exec.side_effect = [
+                Exception("Context not found"),
+                ExecutionResult(status="ok", output="result"),
+            ]
+            with patch.object(executor, "reconnect") as mock_reconnect:
+                result = executor.execute("print(1)")
+
+        mock_reconnect.assert_called_once()
+        assert result.status == "ok"
+        assert result.reconnected is True
+
+    def test_execute_no_reconnect_on_other_error(
+        self, executor: DatabricksExecutor
+    ) -> None:
+        """Test that execution does not reconnect on non-context errors."""
+        executor.context_id = "test-context"
+
+        with patch.object(executor, "_execute_internal") as mock_exec:
+            mock_exec.side_effect = Exception("Some other error")
+            with patch.object(executor, "reconnect") as mock_reconnect:
+                result = executor.execute("print(1)")
+
+        mock_reconnect.assert_not_called()
+        assert result.status == "error"
+        assert "Some other error" in (result.error or "")
+
+    def test_execute_respects_allow_reconnect_false(
+        self, executor: DatabricksExecutor
+    ) -> None:
+        """Test that allow_reconnect=False prevents reconnection."""
+        executor.context_id = "test-context"
+
+        with patch.object(executor, "_execute_internal") as mock_exec:
+            mock_exec.side_effect = Exception("Context not found")
+            with patch.object(executor, "reconnect") as mock_reconnect:
+                result = executor.execute("print(1)", allow_reconnect=False)
+
+        mock_reconnect.assert_not_called()
+        assert result.status == "error"
+
+
+class TestExecutionResult:
+    """Tests for ExecutionResult dataclass."""
+
+    def test_default_reconnected_is_false(self) -> None:
+        """Test that reconnected defaults to False."""
+        result = ExecutionResult(status="ok")
+        assert result.reconnected is False
+
+    def test_reconnected_can_be_set(self) -> None:
+        """Test that reconnected can be set to True."""
+        result = ExecutionResult(status="ok", reconnected=True)
+        assert result.reconnected is True

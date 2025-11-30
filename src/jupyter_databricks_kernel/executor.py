@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,8 @@ from databricks.sdk.service import compute
 
 if TYPE_CHECKING:
     from .config import Config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -20,6 +23,7 @@ class ExecutionResult:
     output: str | None = None
     error: str | None = None
     traceback: list[str] | None = None
+    reconnected: bool = False
 
 
 class DatabricksExecutor:
@@ -62,11 +66,41 @@ class DatabricksExecutor:
         if response and response.id:
             self.context_id = response.id
 
-    def execute(self, code: str) -> ExecutionResult:
+    def reconnect(self) -> None:
+        """Recreate the execution context.
+
+        This resets the context_id and creates a new context.
+        Used when the existing context becomes invalid.
+        """
+        logger.info("Reconnecting: creating new execution context")
+        self.context_id = None
+        self.create_context()
+
+    def _is_context_invalid_error(self, error: Exception) -> bool:
+        """Check if an error indicates the context is invalid.
+
+        Args:
+            error: The exception to check.
+
+        Returns:
+            True if the error indicates context invalidation.
+        """
+        error_str = str(error).lower()
+        invalid_patterns = [
+            "context",
+            "invalid",
+            "not found",
+            "does not exist",
+            "expired",
+        ]
+        return any(pattern in error_str for pattern in invalid_patterns)
+
+    def execute(self, code: str, *, allow_reconnect: bool = True) -> ExecutionResult:
         """Execute code on the Databricks cluster.
 
         Args:
             code: The Python code to execute.
+            allow_reconnect: If True, attempt to reconnect on context errors.
 
         Returns:
             Execution result containing output or error.
@@ -86,6 +120,42 @@ class DatabricksExecutor:
                 error="Cluster ID is not configured",
             )
 
+        try:
+            result = self._execute_internal(code)
+            return result
+        except Exception as e:
+            if allow_reconnect and self._is_context_invalid_error(e):
+                logger.warning("Context invalid, attempting reconnection: %s", e)
+                try:
+                    self.reconnect()
+                    result = self._execute_internal(code)
+                    result.reconnected = True
+                    return result
+                except Exception as retry_error:
+                    logger.error("Reconnection failed: %s", retry_error)
+                    return ExecutionResult(
+                        status="error",
+                        error=f"Reconnection failed: {retry_error}",
+                    )
+            else:
+                logger.error("Execution failed: %s", e)
+                return ExecutionResult(
+                    status="error",
+                    error=str(e),
+                )
+
+    def _execute_internal(self, code: str) -> ExecutionResult:
+        """Internal execution without reconnection logic.
+
+        Args:
+            code: The Python code to execute.
+
+        Returns:
+            Execution result containing output or error.
+
+        Raises:
+            Exception: If execution fails due to API errors.
+        """
         client = self._ensure_client()
         response = client.command_execution.execute(
             cluster_id=self.config.cluster_id,
