@@ -13,6 +13,7 @@ from jupyter_databricks_kernel.sync import (
     FileCache,
     FileSizeError,
     FileSync,
+    SyncStats,
 )
 
 
@@ -386,3 +387,53 @@ class TestValidateSizes:
 
         # Should not raise when no limits configured
         file_sync_no_limit._validate_sizes([large_file])
+
+
+class TestFormatSize:
+    """Tests for _format_size helper method."""
+
+    def test_format_bytes(self, file_sync: FileSync) -> None:
+        """Test formatting bytes."""
+        assert file_sync._format_size(500) == "500 B"
+        assert file_sync._format_size(0) == "0 B"
+
+    def test_format_kilobytes(self, file_sync: FileSync) -> None:
+        """Test formatting kilobytes."""
+        assert file_sync._format_size(1024) == "1.0 KB"
+        assert file_sync._format_size(2560) == "2.5 KB"
+
+    def test_format_megabytes(self, file_sync: FileSync) -> None:
+        """Test formatting megabytes."""
+        assert file_sync._format_size(1024 * 1024) == "1.0 MB"
+        assert file_sync._format_size(int(2.5 * 1024 * 1024)) == "2.5 MB"
+
+
+class TestSyncStats:
+    """Tests for SyncStats dataclass."""
+
+    def test_default_values(self) -> None:
+        """Test default values."""
+        stats = SyncStats()
+        assert stats.changed_files == 0
+        assert stats.changed_size == 0
+        assert stats.skipped_files == 0
+        assert stats.total_files == 0
+        assert stats.sync_duration == 0.0
+        assert stats.dbfs_path == ""
+
+    def test_with_values(self) -> None:
+        """Test with custom values."""
+        stats = SyncStats(
+            changed_files=3,
+            changed_size=1024,
+            skipped_files=10,
+            total_files=13,
+            sync_duration=1.5,
+            dbfs_path="/tmp/test/project.zip",
+        )
+        assert stats.changed_files == 3
+        assert stats.changed_size == 1024
+        assert stats.skipped_files == 10
+        assert stats.total_files == 13
+        assert stats.sync_duration == 1.5
+        assert stats.dbfs_path == "/tmp/test/project.zip"

@@ -85,11 +85,11 @@ class DatabricksKernel(Kernel):
             )
 
             # Upload files
-            dbfs_path = self.file_sync.sync()
-            self._last_dbfs_path = dbfs_path
+            stats = self.file_sync.sync()
+            self._last_dbfs_path = stats.dbfs_path
 
             # Execute setup code on remote
-            setup_code = self.file_sync.get_setup_code(dbfs_path)
+            setup_code = self.file_sync.get_setup_code(stats.dbfs_path)
             result = self.executor.execute(setup_code, allow_reconnect=False)
 
             if result.status != "ok":

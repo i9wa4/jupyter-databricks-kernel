@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import time
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +40,8 @@ class SyncStats:
     changed_size: int = 0
     skipped_files: int = 0
     total_files: int = 0
+    sync_duration: float = 0.0
+    dbfs_path: str = ""
 
 
 @dataclass
@@ -371,21 +374,44 @@ class FileSync:
 
         return zip_buffer.getvalue()
 
-    def sync(self) -> str:
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        """Format file size in human-readable format.
+
+        Args:
+            size_bytes: Size in bytes.
+
+        Returns:
+            Formatted size string (e.g., "2.5 MB").
+        """
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+    def sync(self) -> SyncStats:
         """Synchronize files to DBFS.
 
         Returns:
-            The DBFS path where files were uploaded.
+            Sync statistics including changed files, sizes, and duration.
 
         Raises:
             FileSizeError: If file size limits are exceeded.
         """
+        start_time = time.time()
+
         dbfs_dir = f"/tmp/jupyter_kernel/{self.session_id}"
         dbfs_zip_path = f"{dbfs_dir}/project.zip"
 
         # Get all files and validate sizes
         all_files = self._get_all_files()
         self._validate_sizes(all_files)
+
+        # Get changed files and statistics
+        file_cache = self._get_file_cache()
+        changed_files, stats = file_cache.get_changed_files(all_files)
 
         # Create zip archive
         zip_data = self._create_zip()
@@ -395,13 +421,25 @@ class FileSync:
         with client.dbfs.open(dbfs_zip_path, write=True, overwrite=True) as f:
             f.write(zip_data)
 
-        # Update sync state and file cache
-        file_cache = self._get_file_cache()
+        # Update cache
         file_cache.update(all_files)
         file_cache.save()
         self._synced = True
 
-        return dbfs_zip_path
+        # Calculate duration and set path
+        stats.sync_duration = time.time() - start_time
+        stats.dbfs_path = dbfs_zip_path
+
+        # Log statistics
+        logger.info(
+            "Sync complete: %d changed (%s), %d skipped, %.1fs",
+            stats.changed_files,
+            self._format_size(stats.changed_size),
+            stats.skipped_files,
+            stats.sync_duration,
+        )
+
+        return stats
 
     def get_setup_code(self, dbfs_path: str) -> str:
         """Generate setup code to run on the remote cluster.
