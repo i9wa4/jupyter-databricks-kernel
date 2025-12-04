@@ -144,7 +144,10 @@ class TestReconnectionHandling:
         self, mock_kernel: DatabricksKernel
     ) -> None:
         """Test that reconnection re-runs setup code."""
+        from jupyter_databricks_kernel.executor import ExecutionResult
+
         mock_kernel.executor = MagicMock()
+        mock_kernel.executor.execute.return_value = ExecutionResult(status="ok")
         mock_kernel.file_sync = MagicMock()
         mock_kernel.file_sync.get_setup_code.return_value = "setup_code"
         mock_kernel._last_dbfs_path = "/tmp/test/path"
@@ -155,6 +158,45 @@ class TestReconnectionHandling:
         mock_kernel.executor.execute.assert_called_once_with(
             "setup_code", allow_reconnect=False
         )
+
+    def test_handle_reconnection_warns_on_setup_error(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that reconnection warns user if setup code fails."""
+        from jupyter_databricks_kernel.executor import ExecutionResult
+
+        mock_kernel.executor = MagicMock()
+        mock_kernel.executor.execute.return_value = ExecutionResult(
+            status="error", error="Setup failed"
+        )
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel.file_sync.get_setup_code.return_value = "setup_code"
+        mock_kernel._last_dbfs_path = "/tmp/test/path"
+
+        mock_kernel._handle_reconnection()
+
+        # Check warning was sent
+        calls = mock_kernel.send_response.call_args_list
+        warning_sent = any("failed to restore" in str(c).lower() for c in calls)
+        assert warning_sent
+
+    def test_handle_reconnection_warns_on_exception(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that reconnection warns user if setup throws exception."""
+        mock_kernel.executor = MagicMock()
+        mock_kernel.executor.execute.side_effect = Exception("Network error")
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel.file_sync.get_setup_code.return_value = "setup_code"
+        mock_kernel._last_dbfs_path = "/tmp/test/path"
+
+        # Should not raise
+        mock_kernel._handle_reconnection()
+
+        # Check warning was sent
+        calls = mock_kernel.send_response.call_args_list
+        warning_sent = any("failed to restore" in str(c).lower() for c in calls)
+        assert warning_sent
 
     def test_handle_reconnection_without_sync_path(
         self, mock_kernel: DatabricksKernel

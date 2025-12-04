@@ -135,9 +135,27 @@ class DatabricksKernel(Kernel):
         if self.file_sync and self._last_dbfs_path and self.executor:
             try:
                 setup_code = self.file_sync.get_setup_code(self._last_dbfs_path)
-                self.executor.execute(setup_code, allow_reconnect=False)
-            except Exception:
-                pass  # Best effort - don't fail the main execution
+                result = self.executor.execute(setup_code, allow_reconnect=False)
+                if result.status != "ok":
+                    err = result.error
+                    self.send_response(
+                        self.iopub_socket,
+                        "stream",
+                        {
+                            "name": "stderr",
+                            "text": f"Warning: Failed to restore sys.path: {err}\n",
+                        },
+                    )
+            except Exception as e:
+                # Notify user but don't fail the main execution
+                self.send_response(
+                    self.iopub_socket,
+                    "stream",
+                    {
+                        "name": "stderr",
+                        "text": f"Warning: Failed to restore sys.path: {e}\n",
+                    },
+                )
 
     async def do_execute(
         self,
