@@ -57,9 +57,11 @@ class DatabricksKernel(Kernel):
                 )
             return False
 
-        # Initialize executor and file sync
-        self.executor = DatabricksExecutor(self._kernel_config)
-        self.file_sync = FileSync(self._kernel_config, self._session_id)
+        # Initialize executor and file sync (reuse existing if available)
+        if self.executor is None:
+            self.executor = DatabricksExecutor(self._kernel_config)
+        if self.file_sync is None:
+            self.file_sync = FileSync(self._kernel_config, self._session_id)
         self._initialized = True
         return True
 

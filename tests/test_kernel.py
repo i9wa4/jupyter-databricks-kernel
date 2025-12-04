@@ -91,6 +91,37 @@ class TestRestartBehavior:
 
         assert mock_kernel._initialized is False
 
+    def test_initialize_reuses_existing_executor(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that _initialize reuses existing executor after restart."""
+        # Setup: create executor and file_sync, then simulate restart
+        original_executor = MagicMock()
+        original_file_sync = MagicMock()
+        mock_kernel.executor = original_executor
+        mock_kernel.file_sync = original_file_sync
+        mock_kernel._initialized = False  # Simulates post-restart state
+
+        # Act: re-initialize
+        result = mock_kernel._initialize()
+
+        # Assert: same instances are reused
+        assert result is True
+        assert mock_kernel.executor is original_executor
+        assert mock_kernel.file_sync is original_file_sync
+
+    def test_restart_does_not_call_file_sync_cleanup(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that restart=True does not call file_sync.cleanup()."""
+        mock_kernel.executor = MagicMock()
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel._initialized = True
+
+        asyncio.run(mock_kernel.do_shutdown(restart=True))
+
+        mock_kernel.file_sync.cleanup.assert_not_called()
+
 
 class TestReconnectionHandling:
     """Tests for reconnection handling."""
