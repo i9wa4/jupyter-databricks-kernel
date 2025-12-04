@@ -26,22 +26,37 @@ def executor(mock_config: MagicMock) -> DatabricksExecutor:
 class TestReconnect:
     """Tests for reconnect functionality."""
 
-    def test_reconnect_resets_context_id(self, executor: DatabricksExecutor) -> None:
-        """Test that reconnect resets context_id."""
+    def test_reconnect_destroys_old_context(self, executor: DatabricksExecutor) -> None:
+        """Test that reconnect destroys the old context first."""
         executor.context_id = "old-context-id"
 
-        with patch.object(executor, "create_context") as mock_create:
-            executor.reconnect()
+        with patch.object(executor, "destroy_context") as mock_destroy:
+            with patch.object(executor, "create_context"):
+                executor.reconnect()
 
-        assert executor.context_id is None or mock_create.called
+        mock_destroy.assert_called_once()
 
     def test_reconnect_creates_new_context(self, executor: DatabricksExecutor) -> None:
         """Test that reconnect creates a new context."""
         executor.context_id = "old-context-id"
 
-        with patch.object(executor, "create_context") as mock_create:
-            executor.reconnect()
-            mock_create.assert_called_once()
+        with patch.object(executor, "destroy_context"):
+            with patch.object(executor, "create_context") as mock_create:
+                executor.reconnect()
+                mock_create.assert_called_once()
+
+    def test_reconnect_handles_destroy_error(
+        self, executor: DatabricksExecutor
+    ) -> None:
+        """Test that reconnect continues even if destroy fails."""
+        executor.context_id = "old-context-id"
+
+        with patch.object(executor, "destroy_context") as mock_destroy:
+            mock_destroy.side_effect = Exception("Context already gone")
+            with patch.object(executor, "create_context") as mock_create:
+                # Should not raise
+                executor.reconnect()
+                mock_create.assert_called_once()
 
 
 class TestIsContextInvalidError:

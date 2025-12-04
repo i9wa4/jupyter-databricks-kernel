@@ -69,11 +69,16 @@ class DatabricksExecutor:
     def reconnect(self) -> None:
         """Recreate the execution context.
 
-        This resets the context_id and creates a new context.
+        Destroys the old context (if any) and creates a new one.
         Used when the existing context becomes invalid.
         """
         logger.info("Reconnecting: creating new execution context")
-        self.context_id = None
+        # Try to destroy old context to avoid resource leak on cluster
+        # Ignore errors since context may already be invalid
+        try:
+            self.destroy_context()
+        except Exception:
+            self.context_id = None
         self.create_context()
 
     def _is_context_invalid_error(self, error: Exception) -> bool:
