@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+import re
+import time
+from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from databricks.sdk import WorkspaceClient
@@ -10,6 +14,23 @@ from databricks.sdk.service import compute
 
 if TYPE_CHECKING:
     from .config import Config
+
+logger = logging.getLogger(__name__)
+
+# Retry and timeout configuration
+RECONNECT_DELAY_SECONDS = 1.0  # Delay before reconnection attempt
+CONTEXT_CREATION_TIMEOUT = timedelta(minutes=5)  # Timeout for context creation
+COMMAND_EXECUTION_TIMEOUT = timedelta(minutes=10)  # Timeout for command execution
+
+# Pre-compiled pattern for context error detection
+# Matches errors that specifically relate to execution context invalidation
+CONTEXT_ERROR_PATTERN = re.compile(
+    r"context\s*(not\s*found|does\s*not\s*exist|is\s*invalid|expired)|"
+    r"invalid\s*context|"
+    r"\bcontext_id\b|"
+    r"execution\s*context",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -20,6 +41,7 @@ class ExecutionResult:
     output: str | None = None
     error: str | None = None
     traceback: list[str] | None = None
+    reconnected: bool = False
 
 
 class DatabricksExecutor:
@@ -57,16 +79,54 @@ class DatabricksExecutor:
         response = client.command_execution.create(
             cluster_id=self.config.cluster_id,
             language=compute.Language.PYTHON,
-        ).result()
+        ).result(timeout=CONTEXT_CREATION_TIMEOUT)
 
         if response and response.id:
             self.context_id = response.id
 
-    def execute(self, code: str) -> ExecutionResult:
+    def reconnect(self) -> None:
+        """Recreate the execution context.
+
+        Destroys the old context (if any) and creates a new one.
+        Used when the existing context becomes invalid.
+        """
+        logger.info("Reconnecting: creating new execution context")
+        # Try to destroy old context to avoid resource leak on cluster
+        # Ignore errors since context may already be invalid
+        try:
+            self.destroy_context()
+        except Exception as e:
+            logger.debug("Failed to destroy old context: %s", e)
+            self.context_id = None
+        self.create_context()
+
+    def _is_context_invalid_error(self, error: Exception) -> bool:
+        """Check if an error indicates the context is invalid.
+
+        Only matches errors that specifically relate to execution context,
+        not general errors like "File not found" or "Variable not found".
+
+        Args:
+            error: The exception to check.
+
+        Returns:
+            True if the error indicates context invalidation.
+        """
+        error_str = str(error)
+
+        # Must contain "context" to be considered a context error (case-insensitive)
+        if "context" not in error_str.lower():
+            return False
+
+        # Use pre-compiled pattern for efficient matching
+        return CONTEXT_ERROR_PATTERN.search(error_str) is not None
+
+    def execute(self, code: str, *, allow_reconnect: bool = True) -> ExecutionResult:
         """Execute code on the Databricks cluster.
 
         Args:
             code: The Python code to execute.
+            allow_reconnect: If True, attempt to reconnect on context errors.
 
         Returns:
             Execution result containing output or error.
@@ -86,13 +146,50 @@ class DatabricksExecutor:
                 error="Cluster ID is not configured",
             )
 
+        try:
+            result = self._execute_internal(code)
+            return result
+        except Exception as e:
+            if allow_reconnect and self._is_context_invalid_error(e):
+                logger.warning("Context invalid, attempting reconnection: %s", e)
+                try:
+                    # Wait before reconnection to avoid hammering the API
+                    time.sleep(RECONNECT_DELAY_SECONDS)
+                    self.reconnect()
+                    result = self._execute_internal(code)
+                    return replace(result, reconnected=True)
+                except Exception as retry_error:
+                    logger.error("Reconnection failed: %s", retry_error)
+                    return ExecutionResult(
+                        status="error",
+                        error=f"Reconnection failed: {retry_error}",
+                    )
+            else:
+                logger.error("Execution failed: %s", e)
+                return ExecutionResult(
+                    status="error",
+                    error=str(e),
+                )
+
+    def _execute_internal(self, code: str) -> ExecutionResult:
+        """Internal execution without reconnection logic.
+
+        Args:
+            code: The Python code to execute.
+
+        Returns:
+            Execution result containing output or error.
+
+        Raises:
+            Exception: If execution fails due to API errors.
+        """
         client = self._ensure_client()
         response = client.command_execution.execute(
             cluster_id=self.config.cluster_id,
             context_id=self.context_id,
             language=compute.Language.PYTHON,
             command=code,
-        ).result()
+        ).result(timeout=COMMAND_EXECUTION_TIMEOUT)
 
         if response is None:
             return ExecutionResult(

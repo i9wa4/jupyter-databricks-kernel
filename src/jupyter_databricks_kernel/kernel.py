@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from ipykernel.kernelbase import Kernel
@@ -30,9 +31,11 @@ class DatabricksKernel(Kernel):
         """Initialize the Databricks kernel."""
         super().__init__(**kwargs)
         self._kernel_config = Config.load()
+        self._session_id = str(uuid.uuid4())[:8]
         self.executor: DatabricksExecutor | None = None
         self.file_sync: FileSync | None = None
         self._initialized = False
+        self._last_dbfs_path: str | None = None
 
     def _initialize(self) -> bool:
         """Initialize the Databricks connection.
@@ -54,9 +57,11 @@ class DatabricksKernel(Kernel):
                 )
             return False
 
-        # Initialize executor and file sync
-        self.executor = DatabricksExecutor(self._kernel_config)
-        self.file_sync = FileSync(self._kernel_config)
+        # Initialize executor and file sync (reuse existing if available)
+        if self.executor is None:
+            self.executor = DatabricksExecutor(self._kernel_config)
+        if self.file_sync is None:
+            self.file_sync = FileSync(self._kernel_config, self._session_id)
         self._initialized = True
         return True
 
@@ -81,10 +86,11 @@ class DatabricksKernel(Kernel):
 
             # Upload files
             dbfs_path = self.file_sync.sync()
+            self._last_dbfs_path = dbfs_path
 
             # Execute setup code on remote
             setup_code = self.file_sync.get_setup_code(dbfs_path)
-            result = self.executor.execute(setup_code)
+            result = self.executor.execute(setup_code, allow_reconnect=False)
 
             if result.status != "ok":
                 self.send_response(
@@ -109,6 +115,47 @@ class DatabricksKernel(Kernel):
             )
             # Continue execution even if sync fails
             return True
+
+    def _handle_reconnection(self) -> None:
+        """Handle session reconnection.
+
+        Re-runs the setup code to restore sys.path and notifies the user.
+        """
+        # Notify user about reconnection
+        self.send_response(
+            self.iopub_socket,
+            "stream",
+            {
+                "name": "stderr",
+                "text": "Session reconnected. Variables have been reset.\n",
+            },
+        )
+
+        # Re-run setup code if we have synced files before
+        if self.file_sync and self._last_dbfs_path and self.executor:
+            try:
+                setup_code = self.file_sync.get_setup_code(self._last_dbfs_path)
+                result = self.executor.execute(setup_code, allow_reconnect=False)
+                if result.status != "ok":
+                    err = result.error
+                    self.send_response(
+                        self.iopub_socket,
+                        "stream",
+                        {
+                            "name": "stderr",
+                            "text": f"Warning: Failed to restore sys.path: {err}\n",
+                        },
+                    )
+            except Exception as e:
+                # Notify user but don't fail the main execution
+                self.send_response(
+                    self.iopub_socket,
+                    "stream",
+                    {
+                        "name": "stderr",
+                        "text": f"Warning: Failed to restore sys.path: {e}\n",
+                    },
+                )
 
     async def do_execute(
         self,
@@ -161,6 +208,10 @@ class DatabricksKernel(Kernel):
         assert self.executor is not None
         try:
             result = self.executor.execute(code_str)
+
+            # Handle reconnection: re-run setup code and notify user
+            if result.reconnected:
+                self._handle_reconnection()
 
             if result.status == "ok":
                 if not silent and result.output:
@@ -227,6 +278,13 @@ class DatabricksKernel(Kernel):
         Returns:
             Shutdown result dictionary.
         """
+        if restart:
+            # On restart, keep the execution context alive for session continuity
+            # Only reset the initialized flag so we can re-initialize on next execute
+            self._initialized = False
+            return {"status": "ok", "restart": restart}
+
+        # Full shutdown: clean up everything
         # Clean up file sync
         if self.file_sync:
             try:
@@ -244,4 +302,5 @@ class DatabricksKernel(Kernel):
             self.executor = None
 
         self._initialized = False
+        self._last_dbfs_path = None
         return {"status": "ok", "restart": restart}

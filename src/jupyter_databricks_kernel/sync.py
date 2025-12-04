@@ -5,7 +5,7 @@ from __future__ import annotations
 import fnmatch
 import io
 import os
-import uuid
+import re
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,15 +19,16 @@ if TYPE_CHECKING:
 class FileSync:
     """Synchronizes local files to Databricks DBFS."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, session_id: str) -> None:
         """Initialize file sync.
 
         Args:
             config: Kernel configuration.
+            session_id: Session identifier for DBFS paths.
         """
         self.config = config
         self.client: WorkspaceClient | None = None
-        self.session_id = str(uuid.uuid4())[:8]
+        self.session_id = session_id
         self.last_sync_mtime: float = 0.0
         self._synced = False
         self._user_name: str | None = None
@@ -42,16 +43,37 @@ class FileSync:
             self.client = WorkspaceClient()
         return self.client
 
-    def _get_user_name(self) -> str:
-        """Get the current user's email/username.
+    def _sanitize_path_component(self, value: str) -> str:
+        """Sanitize a string for safe use in file paths.
+
+        Prevents path traversal attacks by removing dangerous characters.
+
+        Args:
+            value: The string to sanitize.
 
         Returns:
-            The user's email address.
+            A sanitized string safe for use in paths.
+        """
+        # Remove path traversal sequences
+        sanitized = value.replace("..", "").replace("/", "_").replace("\\", "_")
+        # Keep only alphanumeric, dots, hyphens, underscores, and @
+        sanitized = re.sub(r"[^a-zA-Z0-9._@-]", "_", sanitized)
+        # Remove leading/trailing dots and spaces
+        sanitized = sanitized.strip(". ")
+        # Ensure non-empty
+        return sanitized or "unknown"
+
+    def _get_user_name(self) -> str:
+        """Get the current user's email/username (sanitized for path safety).
+
+        Returns:
+            The sanitized user's email address.
         """
         if self._user_name is None:
             client = self._ensure_client()
             me = client.current_user.me()
-            self._user_name = me.user_name or "unknown"
+            raw_name = me.user_name or "unknown"
+            self._user_name = self._sanitize_path_component(raw_name)
         return self._user_name
 
     def _get_source_path(self) -> Path:
