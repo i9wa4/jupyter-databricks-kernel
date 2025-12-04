@@ -79,6 +79,9 @@ class DatabricksExecutor:
     def _is_context_invalid_error(self, error: Exception) -> bool:
         """Check if an error indicates the context is invalid.
 
+        Only matches errors that specifically relate to execution context,
+        not general errors like "File not found" or "Variable not found".
+
         Args:
             error: The exception to check.
 
@@ -86,14 +89,22 @@ class DatabricksExecutor:
             True if the error indicates context invalidation.
         """
         error_str = str(error).lower()
-        invalid_patterns = [
-            "context",
-            "invalid",
-            "not found",
-            "does not exist",
-            "expired",
+
+        # Must contain "context" to be considered a context error
+        if "context" not in error_str:
+            return False
+
+        # Check for specific context-related error patterns
+        context_error_patterns = [
+            "context not found",
+            "context does not exist",
+            "context is invalid",
+            "invalid context",
+            "context expired",
+            "context_id",
+            "execution context",
         ]
-        return any(pattern in error_str for pattern in invalid_patterns)
+        return any(pattern in error_str for pattern in context_error_patterns)
 
     def execute(self, code: str, *, allow_reconnect: bool = True) -> ExecutionResult:
         """Execute code on the Databricks cluster.

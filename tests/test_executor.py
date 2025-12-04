@@ -47,24 +47,56 @@ class TestReconnect:
 class TestIsContextInvalidError:
     """Tests for _is_context_invalid_error method."""
 
-    def test_detects_context_error(self, executor: DatabricksExecutor) -> None:
-        """Test that context-related errors are detected."""
+    def test_detects_context_not_found(self, executor: DatabricksExecutor) -> None:
+        """Test that 'context not found' errors are detected."""
         error = Exception("Context not found")
         assert executor._is_context_invalid_error(error) is True
 
-    def test_detects_invalid_error(self, executor: DatabricksExecutor) -> None:
-        """Test that invalid context errors are detected."""
-        error = Exception("Invalid context ID")
+    def test_detects_context_does_not_exist(self, executor: DatabricksExecutor) -> None:
+        """Test that 'context does not exist' errors are detected."""
+        error = Exception("Execution context does not exist")
         assert executor._is_context_invalid_error(error) is True
 
-    def test_detects_expired_error(self, executor: DatabricksExecutor) -> None:
-        """Test that expired context errors are detected."""
-        error = Exception("Session expired")
+    def test_detects_invalid_context(self, executor: DatabricksExecutor) -> None:
+        """Test that 'invalid context' errors are detected."""
+        error = Exception("Invalid context ID provided")
         assert executor._is_context_invalid_error(error) is True
 
-    def test_ignores_other_errors(self, executor: DatabricksExecutor) -> None:
-        """Test that other errors are not flagged as context invalid."""
+    def test_detects_context_expired(self, executor: DatabricksExecutor) -> None:
+        """Test that 'context expired' errors are detected."""
+        error = Exception("Execution context expired")
+        assert executor._is_context_invalid_error(error) is True
+
+    def test_detects_context_id_error(self, executor: DatabricksExecutor) -> None:
+        """Test that context_id related errors are detected."""
+        error = Exception("Error: context_id is invalid")
+        assert executor._is_context_invalid_error(error) is True
+
+    def test_ignores_network_errors(self, executor: DatabricksExecutor) -> None:
+        """Test that network errors are not flagged as context invalid."""
         error = Exception("Network timeout")
+        assert executor._is_context_invalid_error(error) is False
+
+    def test_ignores_file_not_found(self, executor: DatabricksExecutor) -> None:
+        """Test that file errors are not flagged as context invalid."""
+        error = Exception("File not found: /path/to/file")
+        assert executor._is_context_invalid_error(error) is False
+
+    def test_ignores_variable_not_found(self, executor: DatabricksExecutor) -> None:
+        """Test that variable errors are not flagged as context invalid."""
+        error = Exception("NameError: name 'x' is not defined")
+        assert executor._is_context_invalid_error(error) is False
+
+    def test_ignores_invalid_argument(self, executor: DatabricksExecutor) -> None:
+        """Test that argument errors are not flagged as context invalid."""
+        error = Exception("Invalid argument: value must be positive")
+        assert executor._is_context_invalid_error(error) is False
+
+    def test_ignores_session_without_context(
+        self, executor: DatabricksExecutor
+    ) -> None:
+        """Test that generic session errors without 'context' are ignored."""
+        error = Exception("Session expired")
         assert executor._is_context_invalid_error(error) is False
 
 
