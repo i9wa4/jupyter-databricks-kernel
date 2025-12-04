@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 import io
 import os
 import re
@@ -10,6 +9,7 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pathspec
 from databricks.sdk import WorkspaceClient
 
 if TYPE_CHECKING:
@@ -32,6 +32,7 @@ class FileSync:
         self.last_sync_mtime: float = 0.0
         self._synced = False
         self._user_name: str | None = None
+        self._exclude_spec: pathspec.PathSpec | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
         """Ensure the WorkspaceClient is initialized.
@@ -87,6 +88,18 @@ class FileSync:
             source = source[2:]
         return Path.cwd() / source
 
+    def _get_exclude_spec(self) -> pathspec.PathSpec:
+        """Get the compiled pathspec for exclude patterns.
+
+        Returns:
+            Compiled PathSpec for matching exclude patterns.
+        """
+        if self._exclude_spec is None:
+            self._exclude_spec = pathspec.PathSpec.from_lines(
+                "gitwildmatch", self.config.sync.exclude
+            )
+        return self._exclude_spec
+
     def _should_exclude(self, path: Path, base_path: Path) -> bool:
         """Check if a path should be excluded from sync.
 
@@ -98,19 +111,10 @@ class FileSync:
             True if the path should be excluded.
         """
         rel_path = str(path.relative_to(base_path))
-
-        for pattern in self.config.sync.exclude:
-            # Check if any part of the path matches the pattern
-            if fnmatch.fnmatch(path.name, pattern):
-                return True
-            if fnmatch.fnmatch(rel_path, pattern):
-                return True
-            # Check for directory patterns
-            for part in path.parts:
-                if fnmatch.fnmatch(part, pattern):
-                    return True
-
-        return False
+        # Add trailing slash for directories to match directory patterns
+        if path.is_dir():
+            rel_path = rel_path + "/"
+        return self._get_exclude_spec().match_file(rel_path)
 
     def _get_latest_mtime(self) -> float:
         """Get the latest modification time of files in source directory.
