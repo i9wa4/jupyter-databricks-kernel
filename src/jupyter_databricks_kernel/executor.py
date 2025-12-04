@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from databricks.sdk import WorkspaceClient
@@ -15,8 +16,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Retry configuration
+# Retry and timeout configuration
 RECONNECT_DELAY_SECONDS = 1.0  # Delay before reconnection attempt
+CONTEXT_CREATION_TIMEOUT = timedelta(minutes=5)  # Timeout for context creation
+COMMAND_EXECUTION_TIMEOUT = timedelta(minutes=10)  # Timeout for command execution
 
 
 @dataclass
@@ -65,7 +68,7 @@ class DatabricksExecutor:
         response = client.command_execution.create(
             cluster_id=self.config.cluster_id,
             language=compute.Language.PYTHON,
-        ).result()
+        ).result(timeout=CONTEXT_CREATION_TIMEOUT)
 
         if response and response.id:
             self.context_id = response.id
@@ -184,7 +187,7 @@ class DatabricksExecutor:
             context_id=self.context_id,
             language=compute.Language.PYTHON,
             command=code,
-        ).result()
+        ).result(timeout=COMMAND_EXECUTION_TIMEOUT)
 
         if response is None:
             return ExecutionResult(
