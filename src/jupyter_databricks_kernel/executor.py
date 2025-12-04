@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -20,6 +21,16 @@ logger = logging.getLogger(__name__)
 RECONNECT_DELAY_SECONDS = 1.0  # Delay before reconnection attempt
 CONTEXT_CREATION_TIMEOUT = timedelta(minutes=5)  # Timeout for context creation
 COMMAND_EXECUTION_TIMEOUT = timedelta(minutes=10)  # Timeout for command execution
+
+# Pre-compiled pattern for context error detection
+# Matches errors that specifically relate to execution context invalidation
+CONTEXT_ERROR_PATTERN = re.compile(
+    r"context\s*(not\s*found|does\s*not\s*exist|is\s*invalid|expired)|"
+    r"invalid\s*context|"
+    r"context_id|"
+    r"execution\s*context",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -100,23 +111,14 @@ class DatabricksExecutor:
         Returns:
             True if the error indicates context invalidation.
         """
-        error_str = str(error).lower()
+        error_str = str(error)
 
-        # Must contain "context" to be considered a context error
-        if "context" not in error_str:
+        # Must contain "context" to be considered a context error (case-insensitive)
+        if "context" not in error_str.lower():
             return False
 
-        # Check for specific context-related error patterns
-        context_error_patterns = [
-            "context not found",
-            "context does not exist",
-            "context is invalid",
-            "invalid context",
-            "context expired",
-            "context_id",
-            "execution context",
-        ]
-        return any(pattern in error_str for pattern in context_error_patterns)
+        # Use pre-compiled pattern for efficient matching
+        return CONTEXT_ERROR_PATTERN.search(error_str) is not None
 
     def execute(self, code: str, *, allow_reconnect: bool = True) -> ExecutionResult:
         """Execute code on the Databricks cluster.
