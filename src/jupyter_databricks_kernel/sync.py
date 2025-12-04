@@ -25,6 +25,12 @@ CACHE_FILE_NAME = ".databricks-kernel-cache.json"
 CACHE_VERSION = 1
 
 
+class FileSizeError(Exception):
+    """Exception raised when file size limits are exceeded."""
+
+    pass
+
+
 @dataclass
 class SyncStats:
     """Statistics for file synchronization."""
@@ -298,6 +304,45 @@ class FileSync:
         changed_files, _ = self._get_file_cache().get_changed_files(all_files)
         return len(changed_files) > 0
 
+    def _validate_sizes(self, files: list[Path]) -> None:
+        """Validate file sizes against configured limits.
+
+        Args:
+            files: List of file paths to validate.
+
+        Raises:
+            FileSizeError: If any file or total size exceeds limits.
+        """
+        max_file_size = self.config.sync.max_file_size_mb
+        max_total_size = self.config.sync.max_size_mb
+
+        total_size = 0
+        for file_path in files:
+            try:
+                size = file_path.stat().st_size
+                total_size += size
+
+                # Check individual file size
+                if max_file_size is not None:
+                    size_mb = size / (1024 * 1024)
+                    if size_mb > max_file_size:
+                        raise FileSizeError(
+                            f"File '{file_path.name}' ({size_mb:.1f}MB) "
+                            f"exceeds limit ({max_file_size}MB)"
+                        )
+            except OSError:
+                pass  # Skip files that can't be read
+
+        # Check total size
+        if max_total_size is not None:
+            total_size_mb = total_size / (1024 * 1024)
+            if total_size_mb > max_total_size:
+                raise FileSizeError(
+                    f"Project size ({total_size_mb:.1f}MB) exceeds limit "
+                    f"({max_total_size}MB)\n"
+                    "Consider excluding large files in .databricks-kernel.yaml"
+                )
+
     def _create_zip(self) -> bytes:
         """Create a zip archive of the source directory.
 
@@ -331,9 +376,16 @@ class FileSync:
 
         Returns:
             The DBFS path where files were uploaded.
+
+        Raises:
+            FileSizeError: If file size limits are exceeded.
         """
         dbfs_dir = f"/tmp/jupyter_kernel/{self.session_id}"
         dbfs_zip_path = f"{dbfs_dir}/project.zip"
+
+        # Get all files and validate sizes
+        all_files = self._get_all_files()
+        self._validate_sizes(all_files)
 
         # Create zip archive
         zip_data = self._create_zip()
@@ -344,7 +396,6 @@ class FileSync:
             f.write(zip_data)
 
         # Update sync state and file cache
-        all_files = self._get_all_files()
         file_cache = self._get_file_cache()
         file_cache.update(all_files)
         file_cache.save()

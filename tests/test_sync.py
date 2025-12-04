@@ -8,7 +8,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from jupyter_databricks_kernel.sync import CACHE_FILE_NAME, FileCache, FileSync
+from jupyter_databricks_kernel.sync import (
+    CACHE_FILE_NAME,
+    FileCache,
+    FileSizeError,
+    FileSync,
+)
 
 
 @pytest.fixture
@@ -306,3 +311,78 @@ class TestFileCache:
         changed, stats = cache.get_changed_files([file1])
 
         assert stats.changed_size == 100
+
+
+class TestValidateSizes:
+    """Tests for file size validation."""
+
+    @pytest.fixture
+    def file_sync_with_size_limit(self, tmp_path: Path) -> FileSync:
+        """Create a FileSync instance with size limits."""
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = str(tmp_path)
+        config.sync.exclude = []
+        config.sync.max_size_mb = 1.0  # 1MB total limit
+        config.sync.max_file_size_mb = 0.5  # 0.5MB per file limit
+        return FileSync(config, "test-session")
+
+    @pytest.fixture
+    def file_sync_no_limit(self, tmp_path: Path) -> FileSync:
+        """Create a FileSync instance without size limits."""
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = str(tmp_path)
+        config.sync.exclude = []
+        config.sync.max_size_mb = None
+        config.sync.max_file_size_mb = None
+        return FileSync(config, "test-session")
+
+    def test_validate_sizes_within_limits(
+        self, file_sync_with_size_limit: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that files within limits pass validation."""
+        file1 = tmp_path / "small.txt"
+        file1.write_bytes(b"x" * 1000)  # 1KB
+
+        # Should not raise
+        file_sync_with_size_limit._validate_sizes([file1])
+
+    def test_validate_sizes_file_too_large(
+        self, file_sync_with_size_limit: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that single file exceeding limit raises error."""
+        large_file = tmp_path / "large.txt"
+        large_file.write_bytes(b"x" * (600 * 1024))  # 600KB > 0.5MB limit
+
+        with pytest.raises(FileSizeError) as exc_info:
+            file_sync_with_size_limit._validate_sizes([large_file])
+
+        assert "large.txt" in str(exc_info.value)
+        assert "exceeds limit" in str(exc_info.value)
+
+    def test_validate_sizes_total_too_large(
+        self, file_sync_with_size_limit: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that total size exceeding limit raises error."""
+        # Create multiple files that together exceed 1MB
+        for i in range(3):
+            file = tmp_path / f"file{i}.txt"
+            file.write_bytes(b"x" * (400 * 1024))  # 400KB each = 1.2MB total
+
+        files = list(tmp_path.glob("*.txt"))
+        with pytest.raises(FileSizeError) as exc_info:
+            file_sync_with_size_limit._validate_sizes(files)
+
+        assert "Project size" in str(exc_info.value)
+        assert "exceeds limit" in str(exc_info.value)
+
+    def test_validate_sizes_no_limit(
+        self, file_sync_no_limit: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that no limits allows any size."""
+        large_file = tmp_path / "large.txt"
+        large_file.write_bytes(b"x" * (2 * 1024 * 1024))  # 2MB
+
+        # Should not raise when no limits configured
+        file_sync_no_limit._validate_sizes([large_file])

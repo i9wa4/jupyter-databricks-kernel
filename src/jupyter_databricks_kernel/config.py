@@ -25,6 +25,8 @@ class SyncConfig:
             ".pytest_cache",
         ]
     )
+    max_size_mb: float | None = None
+    max_file_size_mb: float | None = None
 
 
 @dataclass
@@ -82,6 +84,10 @@ class Config:
                 self.sync.source = sync_data["source"]
             if "exclude" in sync_data:
                 self.sync.exclude = sync_data["exclude"]
+            if "max_size_mb" in sync_data:
+                self.sync.max_size_mb = sync_data["max_size_mb"]
+            if "max_file_size_mb" in sync_data:
+                self.sync.max_file_size_mb = sync_data["max_file_size_mb"]
 
     def validate(self) -> list[str]:
         """Validate the configuration.
