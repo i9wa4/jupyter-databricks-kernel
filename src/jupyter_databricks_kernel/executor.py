@@ -27,7 +27,7 @@ COMMAND_EXECUTION_TIMEOUT = timedelta(minutes=10)  # Timeout for command executi
 CONTEXT_ERROR_PATTERN = re.compile(
     r"context\s*(not\s*found|does\s*not\s*exist|is\s*invalid|expired)|"
     r"invalid\s*context|"
-    r"context_id|"
+    r"\bcontext_id\b|"
     r"execution\s*context",
     re.IGNORECASE,
 )
@@ -95,7 +95,8 @@ class DatabricksExecutor:
         # Ignore errors since context may already be invalid
         try:
             self.destroy_context()
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to destroy old context: %s", e)
             self.context_id = None
         self.create_context()
 
