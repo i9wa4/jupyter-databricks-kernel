@@ -102,7 +102,8 @@ class FileCache:
         Returns:
             MD5 hash as hexadecimal string.
         """
-        return hashlib.md5(file_path.read_bytes()).hexdigest()
+        # MD5 is used for change detection only, not for security purposes
+        return hashlib.md5(file_path.read_bytes(), usedforsecurity=False).hexdigest()
 
     def get_changed_files(self, files: list[Path]) -> tuple[list[Path], SyncStats]:
         """Get list of changed files and sync statistics.
