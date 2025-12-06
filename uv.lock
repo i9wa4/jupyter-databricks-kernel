@@ -763,6 +763,7 @@ dependencies = [
     { name = "databricks-sdk" },
     { name = "ipykernel" },
     { name = "jupyter-client" },
+    { name = "pathspec" },
     { name = "pyyaml" },
 ]
 
@@ -781,6 +782,7 @@ requires-dist = [
     { name = "databricks-sdk", specifier = ">=0.30.0,<1.0.0" },
     { name = "ipykernel", specifier = ">=6.20.0" },
     { name = "jupyter-client", specifier = ">=8.0.0" },
+    { name = "pathspec", specifier = ">=0.11.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
 

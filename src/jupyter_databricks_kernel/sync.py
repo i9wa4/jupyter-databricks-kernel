@@ -2,18 +2,156 @@
 
 from __future__ import annotations
 
-import fnmatch
+import hashlib
 import io
+import json
+import logging
 import os
 import re
+import time
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import pathspec
 from databricks.sdk import WorkspaceClient
 
 if TYPE_CHECKING:
     from .config import Config
+
+logger = logging.getLogger(__name__)
+
+CACHE_FILE_NAME = ".databricks-kernel-cache.json"
+CACHE_VERSION = 1
+
+
+class FileSizeError(Exception):
+    """Exception raised when file size limits are exceeded."""
+
+    pass
+
+
+@dataclass
+class SyncStats:
+    """Statistics for file synchronization."""
+
+    changed_files: int = 0
+    changed_size: int = 0
+    skipped_files: int = 0
+    total_files: int = 0
+    sync_duration: float = 0.0
+    dbfs_path: str = ""
+
+
+@dataclass
+class FileCache:
+    """MD5 hash-based file cache for change detection."""
+
+    source_path: Path
+    _cache: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Load cache from file after initialization."""
+        self._load()
+
+    @property
+    def cache_path(self) -> Path:
+        """Get the cache file path."""
+        return self.source_path / CACHE_FILE_NAME
+
+    def _load(self) -> None:
+        """Load cache from file. Falls back to empty cache on error."""
+        if not self.cache_path.exists():
+            return
+
+        try:
+            with open(self.cache_path) as f:
+                data: dict[str, Any] = json.load(f)
+
+            # Validate version
+            if data.get("version") != CACHE_VERSION:
+                logger.warning("Cache version mismatch, resetting cache")
+                self._cache = {}
+                return
+
+            self._cache = data.get("files", {})
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to load cache, resetting: %s", e)
+            self._cache = {}
+
+    def save(self) -> None:
+        """Save cache to file."""
+        try:
+            data = {
+                "version": CACHE_VERSION,
+                "files": self._cache,
+            }
+            with open(self.cache_path, "w") as f:
+                json.dump(data, f, indent=2)
+        except OSError as e:
+            logger.warning("Failed to save cache: %s", e)
+
+    @staticmethod
+    def compute_hash(file_path: Path) -> str:
+        """Compute MD5 hash of a file.
+
+        Args:
+            file_path: Path to the file.
+
+        Returns:
+            MD5 hash as hexadecimal string.
+        """
+        # MD5 is used for change detection only, not for security purposes
+        return hashlib.md5(file_path.read_bytes(), usedforsecurity=False).hexdigest()
+
+    def get_changed_files(self, files: list[Path]) -> tuple[list[Path], SyncStats]:
+        """Get list of changed files and sync statistics.
+
+        Args:
+            files: List of file paths to check.
+
+        Returns:
+            Tuple of (changed files list, sync statistics).
+        """
+        changed: list[Path] = []
+        stats = SyncStats(total_files=len(files))
+
+        for file_path in files:
+            try:
+                rel_path = str(file_path.relative_to(self.source_path))
+                current_hash = self.compute_hash(file_path)
+                cached_hash = self._cache.get(rel_path)
+
+                if current_hash != cached_hash:
+                    changed.append(file_path)
+                    stats.changed_files += 1
+                    stats.changed_size += file_path.stat().st_size
+                else:
+                    stats.skipped_files += 1
+            except OSError:
+                # File read error, treat as changed
+                changed.append(file_path)
+                stats.changed_files += 1
+
+        return changed, stats
+
+    def update(self, files: list[Path]) -> None:
+        """Update cache with current file hashes.
+
+        Args:
+            files: List of file paths to update.
+        """
+        for file_path in files:
+            try:
+                rel_path = str(file_path.relative_to(self.source_path))
+                self._cache[rel_path] = self.compute_hash(file_path)
+            except OSError:
+                pass  # Skip files that can't be read
+
+    def clear(self) -> None:
+        """Clear the cache."""
+        self._cache = {}
 
 
 class FileSync:
@@ -29,9 +167,10 @@ class FileSync:
         self.config = config
         self.client: WorkspaceClient | None = None
         self.session_id = session_id
-        self.last_sync_mtime: float = 0.0
         self._synced = False
         self._user_name: str | None = None
+        self._exclude_spec: pathspec.PathSpec | None = None
+        self._file_cache: FileCache | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
         """Ensure the WorkspaceClient is initialized.
@@ -87,6 +226,18 @@ class FileSync:
             source = source[2:]
         return Path.cwd() / source
 
+    def _get_exclude_spec(self) -> pathspec.PathSpec:
+        """Get the compiled pathspec for exclude patterns.
+
+        Returns:
+            Compiled PathSpec for matching exclude patterns.
+        """
+        if self._exclude_spec is None:
+            self._exclude_spec = pathspec.PathSpec.from_lines(
+                "gitwildmatch", self.config.sync.exclude
+            )
+        return self._exclude_spec
+
     def _should_exclude(self, path: Path, base_path: Path) -> bool:
         """Check if a path should be excluded from sync.
 
@@ -98,32 +249,33 @@ class FileSync:
             True if the path should be excluded.
         """
         rel_path = str(path.relative_to(base_path))
+        # Add trailing slash for directories to match directory patterns
+        if path.is_dir():
+            rel_path = rel_path + "/"
+        return self._get_exclude_spec().match_file(rel_path)
 
-        for pattern in self.config.sync.exclude:
-            # Check if any part of the path matches the pattern
-            if fnmatch.fnmatch(path.name, pattern):
-                return True
-            if fnmatch.fnmatch(rel_path, pattern):
-                return True
-            # Check for directory patterns
-            for part in path.parts:
-                if fnmatch.fnmatch(part, pattern):
-                    return True
-
-        return False
-
-    def _get_latest_mtime(self) -> float:
-        """Get the latest modification time of files in source directory.
+    def _get_file_cache(self) -> FileCache:
+        """Get or create the file cache.
 
         Returns:
-            The latest mtime as a float.
+            The FileCache instance.
+        """
+        if self._file_cache is None:
+            self._file_cache = FileCache(self._get_source_path())
+        return self._file_cache
+
+    def _get_all_files(self) -> list[Path]:
+        """Get all non-excluded files in the source directory.
+
+        Returns:
+            List of file paths.
         """
         source_path = self._get_source_path()
         if not source_path.exists():
-            return 0.0
+            return []
 
-        latest_mtime = 0.0
-        for root, dirs, files in os.walk(source_path):
+        files: list[Path] = []
+        for root, dirs, filenames in os.walk(source_path):
             root_path = Path(root)
 
             # Filter out excluded directories
@@ -131,20 +283,15 @@ class FileSync:
                 d for d in dirs if not self._should_exclude(root_path / d, source_path)
             ]
 
-            for file in files:
-                file_path = root_path / file
+            for filename in filenames:
+                file_path = root_path / filename
                 if not self._should_exclude(file_path, source_path):
-                    try:
-                        mtime = file_path.stat().st_mtime
-                        if mtime > latest_mtime:
-                            latest_mtime = mtime
-                    except OSError:
-                        pass
+                    files.append(file_path)
 
-        return latest_mtime
+        return files
 
     def needs_sync(self) -> bool:
-        """Check if files need to be synchronized.
+        """Check if files need to be synchronized using hash-based detection.
 
         Returns:
             True if sync is needed.
@@ -156,9 +303,49 @@ class FileSync:
         if not self._synced:
             return True
 
-        # Check if any files have been modified
-        current_mtime = self._get_latest_mtime()
-        return current_mtime > self.last_sync_mtime
+        # Check if any files have been modified using hash comparison
+        all_files = self._get_all_files()
+        changed_files, _ = self._get_file_cache().get_changed_files(all_files)
+        return len(changed_files) > 0
+
+    def _validate_sizes(self, files: list[Path]) -> None:
+        """Validate file sizes against configured limits.
+
+        Args:
+            files: List of file paths to validate.
+
+        Raises:
+            FileSizeError: If any file or total size exceeds limits.
+        """
+        max_file_size = self.config.sync.max_file_size_mb
+        max_total_size = self.config.sync.max_size_mb
+
+        total_size = 0
+        for file_path in files:
+            try:
+                size = file_path.stat().st_size
+                total_size += size
+
+                # Check individual file size
+                if max_file_size is not None:
+                    size_mb = size / (1024 * 1024)
+                    if size_mb > max_file_size:
+                        raise FileSizeError(
+                            f"File '{file_path.name}' ({size_mb:.1f}MB) "
+                            f"exceeds limit ({max_file_size}MB)"
+                        )
+            except OSError:
+                pass  # Skip files that can't be read
+
+        # Check total size
+        if max_total_size is not None:
+            total_size_mb = total_size / (1024 * 1024)
+            if total_size_mb > max_total_size:
+                raise FileSizeError(
+                    f"Project size ({total_size_mb:.1f}MB) exceeds limit "
+                    f"({max_total_size}MB)\n"
+                    "Consider excluding large files in .databricks-kernel.yaml"
+                )
 
     def _create_zip(self) -> bytes:
         """Create a zip archive of the source directory.
@@ -188,14 +375,44 @@ class FileSync:
 
         return zip_buffer.getvalue()
 
-    def sync(self) -> str:
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        """Format file size in human-readable format.
+
+        Args:
+            size_bytes: Size in bytes.
+
+        Returns:
+            Formatted size string (e.g., "2.5 MB").
+        """
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+    def sync(self) -> SyncStats:
         """Synchronize files to DBFS.
 
         Returns:
-            The DBFS path where files were uploaded.
+            Sync statistics including changed files, sizes, and duration.
+
+        Raises:
+            FileSizeError: If file size limits are exceeded.
         """
+        start_time = time.time()
+
         dbfs_dir = f"/tmp/jupyter_kernel/{self.session_id}"
         dbfs_zip_path = f"{dbfs_dir}/project.zip"
+
+        # Get all files and validate sizes
+        all_files = self._get_all_files()
+        self._validate_sizes(all_files)
+
+        # Get changed files and statistics
+        file_cache = self._get_file_cache()
+        changed_files, stats = file_cache.get_changed_files(all_files)
 
         # Create zip archive
         zip_data = self._create_zip()
@@ -205,11 +422,25 @@ class FileSync:
         with client.dbfs.open(dbfs_zip_path, write=True, overwrite=True) as f:
             f.write(zip_data)
 
-        # Update sync state
-        self.last_sync_mtime = self._get_latest_mtime()
+        # Update cache
+        file_cache.update(all_files)
+        file_cache.save()
         self._synced = True
 
-        return dbfs_zip_path
+        # Calculate duration and set path
+        stats.sync_duration = time.time() - start_time
+        stats.dbfs_path = dbfs_zip_path
+
+        # Log statistics
+        logger.info(
+            "Sync complete: %d changed (%s), %d skipped, %.1fs",
+            stats.changed_files,
+            self._format_size(stats.changed_size),
+            stats.skipped_files,
+            stats.sync_duration,
+        )
+
+        return stats
 
     def get_setup_code(self, dbfs_path: str) -> str:
         """Generate setup code to run on the remote cluster.

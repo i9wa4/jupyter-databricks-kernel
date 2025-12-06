@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from jupyter_databricks_kernel.sync import FileSync
+from jupyter_databricks_kernel.sync import (
+    CACHE_FILE_NAME,
+    FileCache,
+    FileSizeError,
+    FileSync,
+    SyncStats,
+)
 
 
 @pytest.fixture
@@ -22,6 +30,20 @@ def mock_config() -> MagicMock:
 @pytest.fixture
 def file_sync(mock_config: MagicMock) -> FileSync:
     """Create a FileSync instance with mock config."""
+    return FileSync(mock_config, "test-session")
+
+
+@pytest.fixture
+def file_sync_with_patterns(mock_config: MagicMock) -> FileSync:
+    """Create a FileSync instance with exclude patterns."""
+    mock_config.sync.exclude = [
+        "*.pyc",
+        "__pycache__",
+        ".git",
+        ".venv/**",
+        "data/*.csv",
+        "**/*.log",
+    ]
     return FileSync(mock_config, "test-session")
 
 
@@ -79,3 +101,339 @@ class TestSanitizePathComponent:
         result = file_sync._sanitize_path_component(".user.")
         assert not result.startswith(".")
         assert not result.endswith(".")
+
+
+class TestShouldExclude:
+    """Tests for _should_exclude method with pathspec patterns."""
+
+    def test_exclude_pyc_files(
+        self, file_sync_with_patterns: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that *.pyc pattern excludes .pyc files."""
+        pyc_file = tmp_path / "module.pyc"
+        pyc_file.touch()
+        assert file_sync_with_patterns._should_exclude(pyc_file, tmp_path) is True
+
+    def test_exclude_pycache_directory(
+        self, file_sync_with_patterns: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that __pycache__ pattern excludes the directory."""
+        pycache_dir = tmp_path / "__pycache__"
+        pycache_dir.mkdir()
+        assert file_sync_with_patterns._should_exclude(pycache_dir, tmp_path) is True
+
+    def test_exclude_git_directory(
+        self, file_sync_with_patterns: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that .git pattern excludes the directory."""
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        assert file_sync_with_patterns._should_exclude(git_dir, tmp_path) is True
+
+    def test_exclude_venv_recursive(
+        self, file_sync_with_patterns: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that .venv/** pattern excludes files in .venv directory."""
+        venv_dir = tmp_path / ".venv" / "lib"
+        venv_dir.mkdir(parents=True)
+        venv_file = venv_dir / "python.py"
+        venv_file.touch()
+        assert file_sync_with_patterns._should_exclude(venv_file, tmp_path) is True
+
+    def test_exclude_data_csv(
+        self, file_sync_with_patterns: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that data/*.csv pattern excludes CSV files in data directory."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        csv_file = data_dir / "large.csv"
+        csv_file.touch()
+        assert file_sync_with_patterns._should_exclude(csv_file, tmp_path) is True
+
+    def test_exclude_recursive_log(
+        self, file_sync_with_patterns: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that **/*.log pattern excludes log files anywhere."""
+        logs_dir = tmp_path / "logs" / "2024"
+        logs_dir.mkdir(parents=True)
+        log_file = logs_dir / "app.log"
+        log_file.touch()
+        assert file_sync_with_patterns._should_exclude(log_file, tmp_path) is True
+
+    def test_include_normal_python_file(
+        self, file_sync_with_patterns: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that normal Python files are not excluded."""
+        py_file = tmp_path / "main.py"
+        py_file.touch()
+        assert file_sync_with_patterns._should_exclude(py_file, tmp_path) is False
+
+    def test_include_non_matching_csv(
+        self, file_sync_with_patterns: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that CSV files outside data directory are not excluded."""
+        csv_file = tmp_path / "results.csv"
+        csv_file.touch()
+        assert file_sync_with_patterns._should_exclude(csv_file, tmp_path) is False
+
+    def test_empty_exclude_patterns(self, file_sync: FileSync, tmp_path: Path) -> None:
+        """Test that empty exclude patterns don't exclude anything."""
+        py_file = tmp_path / "main.py"
+        py_file.touch()
+        assert file_sync._should_exclude(py_file, tmp_path) is False
+
+
+class TestFileCache:
+    """Tests for FileCache class."""
+
+    def test_compute_hash(self, tmp_path: Path) -> None:
+        """Test MD5 hash computation."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world")
+        cache = FileCache(tmp_path)
+        hash_value = cache.compute_hash(test_file)
+        # MD5 of "hello world" is 5eb63bbbe01eeed093cb22bb8f5acdc3
+        assert hash_value == "5eb63bbbe01eeed093cb22bb8f5acdc3"
+
+    def test_get_changed_files_all_new(self, tmp_path: Path) -> None:
+        """Test that all files are marked as changed when cache is empty."""
+        file1 = tmp_path / "file1.py"
+        file2 = tmp_path / "file2.py"
+        file1.write_text("content1")
+        file2.write_text("content2")
+
+        cache = FileCache(tmp_path)
+        changed, stats = cache.get_changed_files([file1, file2])
+
+        assert len(changed) == 2
+        assert stats.changed_files == 2
+        assert stats.skipped_files == 0
+        assert stats.total_files == 2
+
+    def test_get_changed_files_with_cache(self, tmp_path: Path) -> None:
+        """Test that unchanged files are skipped."""
+        file1 = tmp_path / "file1.py"
+        file2 = tmp_path / "file2.py"
+        file1.write_text("content1")
+        file2.write_text("content2")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1, file2])
+
+        # Modify only file1
+        file1.write_text("modified content")
+
+        changed, stats = cache.get_changed_files([file1, file2])
+
+        assert len(changed) == 1
+        assert file1 in changed
+        assert file2 not in changed
+        assert stats.changed_files == 1
+        assert stats.skipped_files == 1
+
+    def test_save_and_load_cache(self, tmp_path: Path) -> None:
+        """Test cache persistence."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        # Create and save cache
+        cache1 = FileCache(tmp_path)
+        cache1.update([file1])
+        cache1.save()
+
+        # Verify cache file exists
+        cache_file = tmp_path / CACHE_FILE_NAME
+        assert cache_file.exists()
+
+        # Load cache in new instance
+        cache2 = FileCache(tmp_path)
+        changed, stats = cache2.get_changed_files([file1])
+
+        # File should not be changed
+        assert len(changed) == 0
+        assert stats.skipped_files == 1
+
+    def test_cache_version_mismatch(self, tmp_path: Path) -> None:
+        """Test that cache is reset on version mismatch."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        # Create cache file with wrong version
+        cache_file = tmp_path / CACHE_FILE_NAME
+        cache_file.write_text(
+            json.dumps({"version": 999, "files": {"file1.py": "abc"}})
+        )
+
+        cache = FileCache(tmp_path)
+        changed, stats = cache.get_changed_files([file1])
+
+        # File should be marked as changed due to version mismatch
+        assert len(changed) == 1
+
+    def test_cache_corruption_fallback(self, tmp_path: Path) -> None:
+        """Test that corrupted cache falls back to empty."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        # Create corrupted cache file
+        cache_file = tmp_path / CACHE_FILE_NAME
+        cache_file.write_text("not valid json {{{")
+
+        cache = FileCache(tmp_path)
+        changed, stats = cache.get_changed_files([file1])
+
+        # File should be marked as changed due to corrupted cache
+        assert len(changed) == 1
+
+    def test_clear_cache(self, tmp_path: Path) -> None:
+        """Test cache clearing."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+
+        # Verify file is cached
+        changed, _ = cache.get_changed_files([file1])
+        assert len(changed) == 0
+
+        # Clear and verify
+        cache.clear()
+        changed, _ = cache.get_changed_files([file1])
+        assert len(changed) == 1
+
+    def test_changed_size_tracking(self, tmp_path: Path) -> None:
+        """Test that changed file sizes are tracked."""
+        file1 = tmp_path / "file1.py"
+        content = "x" * 100
+        file1.write_text(content)
+
+        cache = FileCache(tmp_path)
+        changed, stats = cache.get_changed_files([file1])
+
+        assert stats.changed_size == 100
+
+
+class TestValidateSizes:
+    """Tests for file size validation."""
+
+    @pytest.fixture
+    def file_sync_with_size_limit(self, tmp_path: Path) -> FileSync:
+        """Create a FileSync instance with size limits."""
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = str(tmp_path)
+        config.sync.exclude = []
+        config.sync.max_size_mb = 1.0  # 1MB total limit
+        config.sync.max_file_size_mb = 0.5  # 0.5MB per file limit
+        return FileSync(config, "test-session")
+
+    @pytest.fixture
+    def file_sync_no_limit(self, tmp_path: Path) -> FileSync:
+        """Create a FileSync instance without size limits."""
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = str(tmp_path)
+        config.sync.exclude = []
+        config.sync.max_size_mb = None
+        config.sync.max_file_size_mb = None
+        return FileSync(config, "test-session")
+
+    def test_validate_sizes_within_limits(
+        self, file_sync_with_size_limit: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that files within limits pass validation."""
+        file1 = tmp_path / "small.txt"
+        file1.write_bytes(b"x" * 1000)  # 1KB
+
+        # Should not raise
+        file_sync_with_size_limit._validate_sizes([file1])
+
+    def test_validate_sizes_file_too_large(
+        self, file_sync_with_size_limit: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that single file exceeding limit raises error."""
+        large_file = tmp_path / "large.txt"
+        large_file.write_bytes(b"x" * (600 * 1024))  # 600KB > 0.5MB limit
+
+        with pytest.raises(FileSizeError) as exc_info:
+            file_sync_with_size_limit._validate_sizes([large_file])
+
+        assert "large.txt" in str(exc_info.value)
+        assert "exceeds limit" in str(exc_info.value)
+
+    def test_validate_sizes_total_too_large(
+        self, file_sync_with_size_limit: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that total size exceeding limit raises error."""
+        # Create multiple files that together exceed 1MB
+        for i in range(3):
+            file = tmp_path / f"file{i}.txt"
+            file.write_bytes(b"x" * (400 * 1024))  # 400KB each = 1.2MB total
+
+        files = list(tmp_path.glob("*.txt"))
+        with pytest.raises(FileSizeError) as exc_info:
+            file_sync_with_size_limit._validate_sizes(files)
+
+        assert "Project size" in str(exc_info.value)
+        assert "exceeds limit" in str(exc_info.value)
+
+    def test_validate_sizes_no_limit(
+        self, file_sync_no_limit: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that no limits allows any size."""
+        large_file = tmp_path / "large.txt"
+        large_file.write_bytes(b"x" * (2 * 1024 * 1024))  # 2MB
+
+        # Should not raise when no limits configured
+        file_sync_no_limit._validate_sizes([large_file])
+
+
+class TestFormatSize:
+    """Tests for _format_size helper method."""
+
+    def test_format_bytes(self, file_sync: FileSync) -> None:
+        """Test formatting bytes."""
+        assert file_sync._format_size(500) == "500 B"
+        assert file_sync._format_size(0) == "0 B"
+
+    def test_format_kilobytes(self, file_sync: FileSync) -> None:
+        """Test formatting kilobytes."""
+        assert file_sync._format_size(1024) == "1.0 KB"
+        assert file_sync._format_size(2560) == "2.5 KB"
+
+    def test_format_megabytes(self, file_sync: FileSync) -> None:
+        """Test formatting megabytes."""
+        assert file_sync._format_size(1024 * 1024) == "1.0 MB"
+        assert file_sync._format_size(int(2.5 * 1024 * 1024)) == "2.5 MB"
+
+
+class TestSyncStats:
+    """Tests for SyncStats dataclass."""
+
+    def test_default_values(self) -> None:
+        """Test default values."""
+        stats = SyncStats()
+        assert stats.changed_files == 0
+        assert stats.changed_size == 0
+        assert stats.skipped_files == 0
+        assert stats.total_files == 0
+        assert stats.sync_duration == 0.0
+        assert stats.dbfs_path == ""
+
+    def test_with_values(self) -> None:
+        """Test with custom values."""
+        stats = SyncStats(
+            changed_files=3,
+            changed_size=1024,
+            skipped_files=10,
+            total_files=13,
+            sync_duration=1.5,
+            dbfs_path="/tmp/test/project.zip",
+        )
+        assert stats.changed_files == 3
+        assert stats.changed_size == 1024
+        assert stats.skipped_files == 10
+        assert stats.total_files == 13
+        assert stats.sync_duration == 1.5
+        assert stats.dbfs_path == "/tmp/test/project.zip"
