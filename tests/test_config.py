@@ -20,7 +20,7 @@ class TestSyncConfigDefaults:
         assert config.exclude == []
         assert config.max_size_mb is None
         assert config.max_file_size_mb is None
-        assert config.use_gitignore is False
+        assert config.use_gitignore is True
 
 
 class TestConfigDefaults:
@@ -133,6 +133,28 @@ cluster_id = "custom-cluster-789"
 
         config = Config.load(config_path=custom_config)
         assert config.cluster_id == "custom-cluster-789"
+
+    def test_load_invalid_toml(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Test loading when pyproject.toml has invalid TOML syntax."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("invalid toml [ syntax")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load()
+        # Should use default values
+        assert config.cluster_id is None
+        assert config.sync.enabled is True
+
+        # Should print warning to stderr
+        captured = capsys.readouterr()
+        assert "Warning: Failed to parse" in captured.err
+        assert "Using default configuration" in captured.err
 
 
 class TestConfigValidate:

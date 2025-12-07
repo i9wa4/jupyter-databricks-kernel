@@ -84,16 +84,16 @@ This kernel synchronizes local files to DBFS for execution on the remote cluster
 
 The `.databricks` directory is always excluded (matching Databricks CLI behavior).
 
-### 5.2. Using .gitignore Patterns
+### 5.2. .gitignore Patterns
 
-You can enable `.gitignore` pattern matching with the `use_gitignore` option:
+By default, all patterns in your `.gitignore` file are respected (matching Databricks CLI behavior).
+
+You can disable this behavior if needed:
 
 ```toml
 [tool.databricks-kernel.sync]
-use_gitignore = true
+use_gitignore = false
 ```
-
-When enabled, all patterns in your `.gitignore` file are respected.
 
 ### 5.3. Custom Exclusions
 

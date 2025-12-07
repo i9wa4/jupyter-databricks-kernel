@@ -628,12 +628,12 @@ class TestGitignorePatternMatching:
         assert file_sync_without_gitignore._should_exclude(data_dir, tmp_path) is False
         assert file_sync_without_gitignore._should_exclude(env_file, tmp_path) is False
 
-    def test_use_gitignore_default_is_false(self, tmp_path: Path) -> None:
-        """Test that use_gitignore defaults to False."""
+    def test_use_gitignore_default_is_true(self, tmp_path: Path) -> None:
+        """Test that use_gitignore defaults to True."""
         from jupyter_databricks_kernel.config import Config
 
         config = Config()
-        assert config.sync.use_gitignore is False
+        assert config.sync.use_gitignore is True
 
 
 class TestFileDeletion:

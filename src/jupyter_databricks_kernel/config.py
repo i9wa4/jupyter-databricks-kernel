@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,7 +23,7 @@ class SyncConfig:
     exclude: list[str] = field(default_factory=list)
     max_size_mb: float | None = None
     max_file_size_mb: float | None = None
-    use_gitignore: bool = False
+    use_gitignore: bool = True
 
 
 @dataclass
@@ -69,8 +70,16 @@ class Config:
         Args:
             config_path: Path to pyproject.toml.
         """
-        with open(config_path, "rb") as f:
-            data = tomllib.load(f)
+        try:
+            with open(config_path, "rb") as f:
+                data = tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
+            print(
+                f"Warning: Failed to parse {config_path}: {e}. "
+                "Using default configuration.",
+                file=sys.stderr,
+            )
+            return
 
         # Get [tool.databricks-kernel] section
         tool_config = data.get("tool", {}).get("databricks-kernel", {})
