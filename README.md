@@ -146,9 +146,11 @@ mise exec -- pre-commit run --all-files
 
 | Runtime | Python | Status |
 |---------|--------|--------|
-| 17.3 LTS | 3.12.3 | Recommended |
-| 16.4 LTS | 3.12.3 | Recommended |
-| 15.4 LTS | 3.11.11 | Supported |
+| [17.3 LTS](https://docs.databricks.com/aws/en/release-notes/runtime/17.3lts) | 3.12.3 | Recommended |
+| [16.4 LTS](https://docs.databricks.com/aws/en/release-notes/runtime/16.4lts) | 3.12.3 | Recommended |
+| [15.4 LTS](https://docs.databricks.com/aws/en/release-notes/runtime/15.4lts) | 3.11.11 | Supported |
+
+For all supported runtimes, see [Databricks Runtime release notes](https://docs.databricks.com/aws/en/release-notes/runtime/).
 
 ## 9. License
 
