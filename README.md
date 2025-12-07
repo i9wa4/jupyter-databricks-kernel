@@ -95,9 +95,20 @@ sync:
     - "data/"
 ```
 
-## 6. Development
+## 6. Documentation
 
-### 6.1. Available Commands
+For detailed documentation, see the [docs](./docs/) directory:
+
+- [Architecture](./docs/architecture.md) - Design overview and data flow
+- [Setup](./docs/setup.md) - Installation and configuration
+- [Usage](./docs/usage.md) - How to use the kernel
+- [Use Cases](./docs/use-cases.md) - Example scenarios and comparison
+- [Constraints](./docs/constraints.md) - Limitations and best practices
+- [Roadmap](./docs/roadmap.md) - Future plans
+
+## 7. Development
+
+### 7.1. Available Commands
 
 | Command | Description |
 |---------|-------------|
@@ -106,13 +117,13 @@ sync:
 | `make test` | Run tests |
 | `make jupyter` | Start JupyterLab |
 
-### 6.2. Code Quality
+### 7.2. Code Quality
 
 ```bash
 mise exec -- pre-commit run --all-files
 ```
 
-## 7. Databricks Runtime Compatibility
+## 8. Databricks Runtime Compatibility
 
 | Runtime | Python | Status |
 |---------|--------|--------|
@@ -120,6 +131,6 @@ mise exec -- pre-commit run --all-files
 | 16.4 LTS | 3.12.3 | Recommended |
 | 15.4 LTS | 3.11.11 | Supported |
 
-## 8. License
+## 9. License
 
 Apache License 2.0
