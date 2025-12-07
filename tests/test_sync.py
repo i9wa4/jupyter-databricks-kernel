@@ -204,12 +204,13 @@ class TestFileCache:
         file2.write_text("content2")
 
         cache = FileCache(tmp_path)
-        changed, stats = cache.get_changed_files([file1, file2])
+        changed, stats, computed_hashes = cache.get_changed_files([file1, file2])
 
         assert len(changed) == 2
         assert stats.changed_files == 2
         assert stats.skipped_files == 0
         assert stats.total_files == 2
+        assert len(computed_hashes) == 2
 
     def test_get_changed_files_with_cache(self, tmp_path: Path) -> None:
         """Test that unchanged files are skipped."""
@@ -224,13 +225,14 @@ class TestFileCache:
         # Modify only file1
         file1.write_text("modified content")
 
-        changed, stats = cache.get_changed_files([file1, file2])
+        changed, stats, computed_hashes = cache.get_changed_files([file1, file2])
 
         assert len(changed) == 1
         assert file1 in changed
         assert file2 not in changed
         assert stats.changed_files == 1
         assert stats.skipped_files == 1
+        assert len(computed_hashes) == 2
 
     def test_save_and_load_cache(self, tmp_path: Path) -> None:
         """Test cache persistence."""
@@ -248,7 +250,7 @@ class TestFileCache:
 
         # Load cache in new instance
         cache2 = FileCache(tmp_path)
-        changed, stats = cache2.get_changed_files([file1])
+        changed, stats, _ = cache2.get_changed_files([file1])
 
         # File should not be changed
         assert len(changed) == 0
@@ -266,7 +268,7 @@ class TestFileCache:
         )
 
         cache = FileCache(tmp_path)
-        changed, stats = cache.get_changed_files([file1])
+        changed, stats, _ = cache.get_changed_files([file1])
 
         # File should be marked as changed due to version mismatch
         assert len(changed) == 1
@@ -281,7 +283,7 @@ class TestFileCache:
         cache_file.write_text("not valid json {{{")
 
         cache = FileCache(tmp_path)
-        changed, stats = cache.get_changed_files([file1])
+        changed, stats, _ = cache.get_changed_files([file1])
 
         # File should be marked as changed due to corrupted cache
         assert len(changed) == 1
@@ -295,12 +297,12 @@ class TestFileCache:
         cache.update([file1])
 
         # Verify file is cached
-        changed, _ = cache.get_changed_files([file1])
+        changed, _, _ = cache.get_changed_files([file1])
         assert len(changed) == 0
 
         # Clear and verify
         cache.clear()
-        changed, _ = cache.get_changed_files([file1])
+        changed, _, _ = cache.get_changed_files([file1])
         assert len(changed) == 1
 
     def test_changed_size_tracking(self, tmp_path: Path) -> None:
@@ -310,9 +312,71 @@ class TestFileCache:
         file1.write_text(content)
 
         cache = FileCache(tmp_path)
-        changed, stats = cache.get_changed_files([file1])
+        changed, stats, _ = cache.get_changed_files([file1])
 
         assert stats.changed_size == 100
+
+    def test_has_any_changed_returns_true_on_change(self, tmp_path: Path) -> None:
+        """Test that has_any_changed returns True when file is modified."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+
+        # Modify the file
+        file1.write_text("modified content")
+
+        assert cache.has_any_changed([file1]) is True
+
+    def test_has_any_changed_returns_false_when_unchanged(self, tmp_path: Path) -> None:
+        """Test that has_any_changed returns False when no changes."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+
+        assert cache.has_any_changed([file1]) is False
+
+    def test_has_any_changed_returns_true_for_new_file(self, tmp_path: Path) -> None:
+        """Test that has_any_changed returns True for uncached files."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        # Don't update cache - file is new
+
+        assert cache.has_any_changed([file1]) is True
+
+    def test_has_any_changed_returns_true_on_read_error(self, tmp_path: Path) -> None:
+        """Test that has_any_changed returns True when file cannot be read."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+
+        # Delete file to cause read error
+        file1.unlink()
+
+        # Read error should be treated as changed
+        assert cache.has_any_changed([file1]) is True
+
+    def test_update_reuses_computed_hashes(self, tmp_path: Path) -> None:
+        """Test that update() reuses pre-computed hashes instead of recomputing."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        _, _, computed_hashes = cache.get_changed_files([file1])
+
+        # Pass computed_hashes to update
+        cache.update([file1], computed_hashes)
+
+        # Verify cache contains the correct hash
+        rel_path = "file1.py"
+        assert cache._cache[rel_path] == computed_hashes[rel_path]
 
 
 class TestValidateSizes:
@@ -556,7 +620,7 @@ class TestFileDeletion:
         cache.remove("file1.py")
 
         # File should now be detected as changed (not in cache)
-        changed, _ = cache.get_changed_files([file1])
+        changed, _, _ = cache.get_changed_files([file1])
         assert file1 in changed
 
     def test_get_deleted_files_multiple_deletions(self, tmp_path: Path) -> None:

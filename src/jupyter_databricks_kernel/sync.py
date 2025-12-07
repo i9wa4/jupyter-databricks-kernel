@@ -107,37 +107,56 @@ class FileCache:
     def compute_hash(file_path: Path) -> str:
         """Compute MD5 hash of a file.
 
+        Uses hashlib.file_digest() for memory-efficient chunked reading,
+        which prevents memory pressure when processing large files.
+
         Args:
             file_path: Path to the file.
 
         Returns:
             MD5 hash as hexadecimal string.
         """
-        # MD5 is used for change detection only, not for security purposes
-        return hashlib.md5(file_path.read_bytes(), usedforsecurity=False).hexdigest()
+        # MD5 is used for change detection only, not for security purposes.
+        # Pass a callable to set usedforsecurity=False for FIPS compliance.
+        with open(file_path, "rb") as f:
+            return hashlib.file_digest(
+                f, lambda: hashlib.md5(usedforsecurity=False)
+            ).hexdigest()
 
-    def get_changed_files(self, files: list[Path]) -> tuple[list[Path], SyncStats]:
+    def get_changed_files(
+        self, files: list[Path], file_sizes: dict[Path, int] | None = None
+    ) -> tuple[list[Path], SyncStats, dict[str, str]]:
         """Get list of changed files and sync statistics.
 
         Args:
             files: List of file paths to check.
+            file_sizes: Optional dict of pre-computed file sizes (path -> size).
+                If provided, sizes are reused instead of calling stat() again.
 
         Returns:
-            Tuple of (changed files list, sync statistics).
+            Tuple of (changed files list, sync statistics, computed hashes).
+            The computed hashes dict maps relative paths to their MD5 hashes,
+            which can be passed to update() to avoid recomputing.
         """
         changed: list[Path] = []
         stats = SyncStats(total_files=len(files))
+        computed_hashes: dict[str, str] = {}
 
         for file_path in files:
             try:
                 rel_path = str(file_path.relative_to(self.source_path))
                 current_hash = self.compute_hash(file_path)
+                computed_hashes[rel_path] = current_hash
                 cached_hash = self._cache.get(rel_path)
 
                 if current_hash != cached_hash:
                     changed.append(file_path)
                     stats.changed_files += 1
-                    stats.changed_size += file_path.stat().st_size
+                    # Reuse pre-computed size if available
+                    if file_sizes and file_path in file_sizes:
+                        stats.changed_size += file_sizes[file_path]
+                    else:
+                        stats.changed_size += file_path.stat().st_size
                 else:
                     stats.skipped_files += 1
             except OSError:
@@ -145,18 +164,25 @@ class FileCache:
                 changed.append(file_path)
                 stats.changed_files += 1
 
-        return changed, stats
+        return changed, stats, computed_hashes
 
-    def update(self, files: list[Path]) -> None:
+    def update(
+        self, files: list[Path], computed_hashes: dict[str, str] | None = None
+    ) -> None:
         """Update cache with current file hashes.
 
         Args:
             files: List of file paths to update.
+            computed_hashes: Optional dict of pre-computed hashes (rel_path -> hash).
+                If provided, hashes are reused instead of recomputing.
         """
         for file_path in files:
             try:
                 rel_path = str(file_path.relative_to(self.source_path))
-                self._cache[rel_path] = self.compute_hash(file_path)
+                if computed_hashes and rel_path in computed_hashes:
+                    self._cache[rel_path] = computed_hashes[rel_path]
+                else:
+                    self._cache[rel_path] = self.compute_hash(file_path)
             except OSError:
                 pass  # Skip files that can't be read
 
@@ -189,6 +215,30 @@ class FileCache:
             rel_path: Relative path of the file to remove.
         """
         self._cache.pop(rel_path, None)
+
+    def has_any_changed(self, files: list[Path]) -> bool:
+        """Check if any file has changed, with early return on first change.
+
+        This is more efficient than get_changed_files() when you only need
+        to know if sync is needed, as it stops at the first changed file.
+
+        Args:
+            files: List of file paths to check.
+
+        Returns:
+            True if any file has changed, False otherwise.
+        """
+        for file_path in files:
+            try:
+                rel_path = str(file_path.relative_to(self.source_path))
+                current_hash = self.compute_hash(file_path)
+                cached_hash = self._cache.get(rel_path)
+                if current_hash != cached_hash:
+                    return True
+            except OSError:
+                # File read error, treat as changed
+                return True
+        return False
 
 
 class FileSync:
@@ -401,15 +451,23 @@ class FileSync:
         # Check if any files have been modified or deleted using hash comparison
         all_files = self._get_all_files()
         file_cache = self._get_file_cache()
-        changed_files, _ = file_cache.get_changed_files(all_files)
-        deleted_files = file_cache.get_deleted_files(all_files)
-        return len(changed_files) > 0 or len(deleted_files) > 0
 
-    def _validate_sizes(self, files: list[Path]) -> None:
+        # Early return: check for deleted files first (cheap operation)
+        deleted_files = file_cache.get_deleted_files(all_files)
+        if deleted_files:
+            return True
+
+        # Early return: stop at first changed file
+        return file_cache.has_any_changed(all_files)
+
+    def _validate_sizes(self, files: list[Path]) -> dict[Path, int]:
         """Validate file sizes against configured limits.
 
         Args:
             files: List of file paths to validate.
+
+        Returns:
+            Dict mapping file paths to their sizes (for reuse in other methods).
 
         Raises:
             FileSizeError: If any file or total size exceeds limits.
@@ -418,9 +476,11 @@ class FileSync:
         max_total_size = self.config.sync.max_size_mb
 
         total_size = 0
+        file_sizes: dict[Path, int] = {}
         for file_path in files:
             try:
                 size = file_path.stat().st_size
+                file_sizes[file_path] = size
                 total_size += size
 
                 # Check individual file size
@@ -444,8 +504,14 @@ class FileSync:
                     "Consider excluding large files in .databricks-kernel.yaml"
                 )
 
-    def _create_zip(self) -> bytes:
+        return file_sizes
+
+    def _create_zip(self, files: list[Path] | None = None) -> bytes:
         """Create a zip archive of the source directory.
+
+        Args:
+            files: Optional list of file paths to include. If None, uses os.walk
+                to discover files (for backward compatibility).
 
         Returns:
             The zip file contents as bytes.
@@ -454,21 +520,28 @@ class FileSync:
         zip_buffer = io.BytesIO()
 
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for root, dirs, files in os.walk(source_path):
-                root_path = Path(root)
+            if files is not None:
+                # Use pre-computed file list (avoids duplicate os.walk)
+                for file_path in files:
+                    arcname = file_path.relative_to(source_path)
+                    zf.write(file_path, arcname)
+            else:
+                # Fallback: discover files via os.walk
+                for root, dirs, filenames in os.walk(source_path):
+                    root_path = Path(root)
 
-                # Filter out excluded directories
-                dirs[:] = [
-                    d
-                    for d in dirs
-                    if not self._should_exclude(root_path / d, source_path)
-                ]
+                    # Filter out excluded directories
+                    dirs[:] = [
+                        d
+                        for d in dirs
+                        if not self._should_exclude(root_path / d, source_path)
+                    ]
 
-                for file in files:
-                    file_path = root_path / file
-                    if not self._should_exclude(file_path, source_path):
-                        arcname = file_path.relative_to(source_path)
-                        zf.write(file_path, arcname)
+                    for filename in filenames:
+                        file_path = root_path / filename
+                        if not self._should_exclude(file_path, source_path):
+                            arcname = file_path.relative_to(source_path)
+                            zf.write(file_path, arcname)
 
         return zip_buffer.getvalue()
 
@@ -503,16 +576,18 @@ class FileSync:
         dbfs_dir = f"/tmp/jupyter_kernel/{self.session_id}"
         dbfs_zip_path = f"{dbfs_dir}/project.zip"
 
-        # Get all files and validate sizes
+        # Get all files and validate sizes (also returns size info for reuse)
         all_files = self._get_all_files()
-        self._validate_sizes(all_files)
+        file_sizes = self._validate_sizes(all_files)
 
-        # Get changed files and statistics
+        # Get changed files and statistics (reuse size info to avoid duplicate stat())
         file_cache = self._get_file_cache()
-        changed_files, stats = file_cache.get_changed_files(all_files)
+        changed_files, stats, computed_hashes = file_cache.get_changed_files(
+            all_files, file_sizes
+        )
 
-        # Create zip archive
-        zip_data = self._create_zip()
+        # Create zip archive (reuse file list to avoid duplicate os.walk)
+        zip_data = self._create_zip(all_files)
 
         # Upload to DBFS using SDK's high-level API
         client = self._ensure_client()
@@ -524,8 +599,8 @@ class FileSync:
         for rel_path in deleted_files:
             file_cache.remove(rel_path)
 
-        # Update cache
-        file_cache.update(all_files)
+        # Update cache (reuse computed hashes to avoid recomputation)
+        file_cache.update(all_files, computed_hashes)
         file_cache.save()
         self._synced = True
 
