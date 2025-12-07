@@ -57,7 +57,14 @@ class SyncStats:
 
 @dataclass
 class FileCache:
-    """MD5 hash-based file cache for change detection."""
+    """MD5 hash-based file cache for change detection.
+
+    Design note:
+        The changed_files tracking is used for statistics display only.
+        This implementation intentionally does NOT use incremental upload,
+        because all files are bundled into a single zip archive for atomic
+        deployment to DBFS.
+    """
 
     source_path: Path
     _cache: dict[str, str] = field(default_factory=dict)
@@ -92,16 +99,28 @@ class FileCache:
             self._cache = {}
 
     def save(self) -> None:
-        """Save cache to file."""
+        """Save cache to file atomically.
+
+        Uses a temporary file and atomic rename to prevent corruption
+        from concurrent access or crashes during write.
+        """
+        tmp_path = self.cache_path.with_suffix(".tmp")
         try:
             data = {
                 "version": CACHE_VERSION,
                 "files": self._cache,
             }
-            with open(self.cache_path, "w") as f:
+            with open(tmp_path, "w") as f:
                 json.dump(data, f, indent=2)
+            # Atomic rename (works on both POSIX and Windows)
+            os.replace(tmp_path, self.cache_path)
         except OSError as e:
             logger.warning("Failed to save cache: %s", e)
+            # Clean up temporary file if it exists
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def compute_hash(file_path: Path) -> str:
@@ -405,11 +424,12 @@ class FileSync:
         deleted_files = file_cache.get_deleted_files(all_files)
         return len(changed_files) > 0 or len(deleted_files) > 0
 
-    def _validate_sizes(self, files: list[Path]) -> None:
+    def _validate_sizes(self, files: list[Path], source_path: Path) -> None:
         """Validate file sizes against configured limits.
 
         Args:
             files: List of file paths to validate.
+            source_path: Base path for relative path display in error messages.
 
         Raises:
             FileSizeError: If any file or total size exceeds limits.
@@ -427,8 +447,9 @@ class FileSync:
                 if max_file_size is not None:
                     size_mb = size / (1024 * 1024)
                     if size_mb > max_file_size:
+                        rel_path = file_path.relative_to(source_path)
                         raise FileSizeError(
-                            f"File '{file_path.name}' ({size_mb:.1f}MB) "
+                            f"File '{rel_path}' ({size_mb:.1f}MB) "
                             f"exceeds limit ({max_file_size}MB)"
                         )
             except OSError:
@@ -480,14 +501,16 @@ class FileSync:
             size_bytes: Size in bytes.
 
         Returns:
-            Formatted size string (e.g., "2.5 MB").
+            Formatted size string (e.g., "1 KB", "2.5 MB").
         """
         if size_bytes < 1024:
             return f"{size_bytes} B"
         elif size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} KB"
+            kb = size_bytes / 1024
+            return f"{kb:.0f} KB" if kb == int(kb) else f"{kb:.1f} KB"
         else:
-            return f"{size_bytes / (1024 * 1024):.1f} MB"
+            mb = size_bytes / (1024 * 1024)
+            return f"{mb:.0f} MB" if mb == int(mb) else f"{mb:.1f} MB"
 
     def sync(self) -> SyncStats:
         """Synchronize files to DBFS.
@@ -504,8 +527,9 @@ class FileSync:
         dbfs_zip_path = f"{dbfs_dir}/project.zip"
 
         # Get all files and validate sizes
+        source_path = self._get_source_path()
         all_files = self._get_all_files()
-        self._validate_sizes(all_files)
+        self._validate_sizes(all_files, source_path)
 
         # Get changed files and statistics
         file_cache = self._get_file_cache()
