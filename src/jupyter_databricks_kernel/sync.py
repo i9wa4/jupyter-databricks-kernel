@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import re
+import stat
+import tempfile
 import time
 import zipfile
 from dataclasses import dataclass, field
@@ -101,26 +103,59 @@ class FileCache:
     def save(self) -> None:
         """Save cache to file atomically.
 
-        Uses a temporary file and atomic rename to prevent corruption
-        from concurrent access or crashes during write.
+        Uses a secure temporary file and atomic rename to prevent corruption
+        from concurrent access, crashes, or symlink attacks.
         """
-        tmp_path = self.cache_path.with_suffix(".tmp")
+        fd = None
+        tmp_path = None
         try:
+            # Preserve permissions from existing file if present
+            original_mode = None
+            if self.cache_path.exists():
+                original_mode = self.cache_path.stat().st_mode
+
             data = {
                 "version": CACHE_VERSION,
                 "files": self._cache,
             }
-            with open(tmp_path, "w") as f:
+
+            # Create secure temporary file in same directory (for atomic rename)
+            # O_EXCL prevents symlink attacks, unique name prevents collisions
+            fd, tmp_path_str = tempfile.mkstemp(
+                suffix=".tmp",
+                prefix=".cache-",
+                dir=self.cache_path.parent,
+            )
+            tmp_path = Path(tmp_path_str)
+
+            with os.fdopen(fd, "w") as f:
+                fd = None  # fd is now owned by the file object
                 json.dump(data, f, indent=2)
+                # Flush and fsync for crash safety
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Restore original permissions if they existed
+            if original_mode is not None:
+                os.chmod(tmp_path, stat.S_IMODE(original_mode))
+
             # Atomic rename (works on both POSIX and Windows)
             os.replace(tmp_path, self.cache_path)
+            tmp_path = None  # Rename succeeded, no cleanup needed
         except OSError as e:
             logger.warning("Failed to save cache: %s", e)
-            # Clean up temporary file if it exists
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+        finally:
+            # Clean up: close fd if still open, remove temp file if exists
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     @staticmethod
     def compute_hash(file_path: Path) -> str:
@@ -506,7 +541,9 @@ class FileSync:
                 if max_file_size is not None:
                     size_mb = size / (1024 * 1024)
                     if size_mb > max_file_size:
-                        rel_path = file_path.relative_to(source_path)
+                        # Use os.path.relpath for safer relative path computation
+                        # (doesn't raise ValueError if paths are on different drives)
+                        rel_path = os.path.relpath(file_path, source_path)
                         raise FileSizeError(
                             f"File '{rel_path}' ({size_mb:.1f}MB) "
                             f"exceeds limit ({max_file_size}MB)"
@@ -583,10 +620,10 @@ class FileSync:
             return f"{size_bytes} B"
         elif size_bytes < 1024 * 1024:
             kb = size_bytes / 1024
-            return f"{kb:.0f} KB" if kb == int(kb) else f"{kb:.1f} KB"
+            return f"{kb:.0f} KB" if kb.is_integer() else f"{kb:.1f} KB"
         else:
             mb = size_bytes / (1024 * 1024)
-            return f"{mb:.0f} MB" if mb == int(mb) else f"{mb:.1f} MB"
+            return f"{mb:.0f} MB" if mb.is_integer() else f"{mb:.1f} MB"
 
     def sync(self) -> SyncStats:
         """Synchronize files to DBFS.
