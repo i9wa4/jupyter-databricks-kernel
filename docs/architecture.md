@@ -1,10 +1,10 @@
 # Architecture
 
-## Overview
+## 1. Overview
 
 jupyter-databricks-session-kernel is a Jupyter kernel that executes Python code entirely on Databricks clusters. Unlike Databricks Connect, which runs Python locally and only sends Spark operations to the cluster, this kernel sends all code to the remote cluster for execution.
 
-### Design Principle: Complete Remote Execution
+### 1.1. Design Principle: Complete Remote Execution
 
 | Aspect | This Kernel | Databricks Connect |
 |--------|-------------|-------------------|
@@ -15,7 +15,7 @@ jupyter-databricks-session-kernel is a Jupyter kernel that executes Python code 
 
 This design enables use cases where local resources are insufficient, such as GPU-accelerated workloads or large-memory operations.
 
-## Components
+## 2. Components
 
 The kernel consists of four main modules:
 
@@ -27,7 +27,7 @@ src/jupyter_databricks_kernel/
 └── config.py      # Configuration loading and validation
 ```
 
-### kernel.py
+### 2.1. kernel.py
 
 The main kernel class that implements the Jupyter kernel protocol. Handles:
 
@@ -35,7 +35,7 @@ The main kernel class that implements the Jupyter kernel protocol. Handles:
 - File synchronization coordination
 - Result formatting and display
 
-### executor.py
+### 2.2. executor.py
 
 Manages the Databricks execution context using the Command Execution API. Handles:
 
@@ -43,7 +43,7 @@ Manages the Databricks execution context using the Command Execution API. Handle
 - Code execution with timeout handling
 - Automatic reconnection on context invalidation
 
-### sync.py
+### 2.3. sync.py
 
 Implements file synchronization from local machine to the Databricks cluster. Handles:
 
@@ -52,7 +52,7 @@ Implements file synchronization from local machine to the Databricks cluster. Ha
 - ZIP creation and DBFS upload
 - Remote extraction to Workspace
 
-### config.py
+### 2.4. config.py
 
 Loads and validates configuration from environment variables and YAML files. Handles:
 
@@ -60,7 +60,7 @@ Loads and validates configuration from environment variables and YAML files. Han
 - Validation of required settings
 - Default value management
 
-## Data Flow
+## 3. Data Flow
 
 ```mermaid
 flowchart TD
@@ -90,7 +90,7 @@ flowchart TD
     K -->|"10. Display output"| JL
 ```
 
-### Execution Flow Details
+### 3.1. Execution Flow Details
 
 1. User executes a cell in JupyterLab
 2. Kernel checks if local files have changed since last sync
@@ -103,9 +103,9 @@ flowchart TD
 9. Results (stdout, stderr, display data) are collected
 10. Formatted results are displayed in JupyterLab
 
-## Session Lifecycle
+## 4. Session Lifecycle
 
-### Initialize
+### 4.1. Initialize
 
 When the kernel starts:
 
@@ -113,7 +113,7 @@ When the kernel starts:
 2. Validate required settings (cluster_id)
 3. Create session ID (UUID)
 
-### First Execution
+### 4.2. First Execution
 
 On the first code execution:
 
@@ -121,7 +121,7 @@ On the first code execution:
 2. Perform initial file synchronization
 3. Execute setup code to configure `sys.path`
 
-### Subsequent Executions
+### 4.3. Subsequent Executions
 
 For each code execution:
 
@@ -130,7 +130,7 @@ For each code execution:
 3. Execute code via existing context
 4. Handle reconnection if context is lost
 
-### Shutdown
+### 4.4. Shutdown
 
 On kernel shutdown:
 
@@ -138,9 +138,9 @@ On kernel shutdown:
 2. Clean up Workspace files (`/Workspace/Users/{user}/jupyter_kernel/{session_id}/`)
 3. Destroy execution context
 
-## File Synchronization Architecture
+## 5. File Synchronization Architecture
 
-### Sync Strategy
+### 5.1. Sync Strategy
 
 Files are synchronized using a ZIP-based approach:
 
@@ -150,14 +150,14 @@ Files are synchronized using a ZIP-based approach:
 4. Upload to DBFS
 5. Extract on cluster via `dbutils.fs.cp` and `zipfile`
 
-### Storage Locations
+### 5.2. Storage Locations
 
 | Location | Purpose |
 |----------|---------|
 | DBFS `/tmp/jupyter_kernel/{session_id}/` | Temporary ZIP storage |
 | Workspace `/Workspace/Users/{user}/jupyter_kernel/{session_id}/` | Extracted files for execution |
 
-### Exclude Patterns
+### 5.3. Exclude Patterns
 
 Files are excluded based on:
 
@@ -165,7 +165,7 @@ Files are excluded based on:
 2. `.gitignore` patterns (if present)
 3. User-configured exclude patterns in `.databricks-kernel.yaml`
 
-## Reconnection Mechanism
+## 6. Reconnection Mechanism
 
 The kernel automatically handles context invalidation:
 

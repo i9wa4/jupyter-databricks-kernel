@@ -1,8 +1,8 @@
 # Roadmap
 
-## Planned Features
+## 1. Planned Features
 
-### Differential Sync (rsync-style)
+### 1.1. Differential Sync (rsync-style)
 
 Currently, the kernel uploads all files as a ZIP archive. A future improvement would sync only changed files incrementally:
 
@@ -10,7 +10,7 @@ Currently, the kernel uploads all files as a ZIP archive. A future improvement w
 - Lower bandwidth usage
 - Faster iteration cycles
 
-### Improved Error Messages
+### 1.2. Improved Error Messages
 
 Enhance error reporting with:
 
@@ -18,7 +18,7 @@ Enhance error reporting with:
 - Better context for cluster errors
 - Suggestions for common issues
 
-### Configurable Timeouts
+### 1.3. Configurable Timeouts
 
 Allow users to configure:
 
@@ -26,7 +26,7 @@ Allow users to configure:
 - Command execution timeout
 - Reconnection delay
 
-### Progress Indicators
+### 1.4. Progress Indicators
 
 Show progress for:
 
@@ -34,9 +34,9 @@ Show progress for:
 - Cluster startup
 - Long-running operations
 
-## Under Consideration
+## 2. Under Consideration
 
-### Multiple Cluster Support
+### 2.1. Multiple Cluster Support
 
 Ability to switch between clusters within a session:
 
@@ -47,11 +47,11 @@ clusters:
   large: "high-memory-cluster"
 ```
 
-### Serverless Support
+### 2.2. Serverless Support
 
 Pending Databricks API support for Command Execution on serverless compute. Currently blocked by API limitations.
 
-### State Persistence
+### 2.3. State Persistence
 
 Optional serialization of session state:
 
@@ -59,7 +59,7 @@ Optional serialization of session state:
 - Restore on reconnection
 - Reduce re-execution after cluster restart
 
-### Workspace Integration
+### 2.4. Workspace Integration
 
 Better integration with Databricks Workspace:
 
@@ -67,9 +67,9 @@ Better integration with Databricks Workspace:
 - Git integration
 - Collaboration features
 
-## Recently Completed
+## 3. Recently Completed
 
-### gitignore-based File Sync
+### 3.1. gitignore-based File Sync
 
 Implemented in v0.2.0:
 
@@ -77,6 +77,6 @@ Implemented in v0.2.0:
 - Matches Databricks CLI behavior
 - User-configurable exclude patterns
 
-## Contributing
+## 4. Contributing
 
 Feature requests and contributions are welcome. Please open an issue to discuss before implementing major changes.

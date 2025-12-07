@@ -2,7 +2,7 @@
 
 Welcome to the jupyter-databricks-session-kernel documentation.
 
-## Quick Links
+## 1. Quick Links
 
 | Document | Description |
 |----------|-------------|
@@ -13,7 +13,7 @@ Welcome to the jupyter-databricks-session-kernel documentation.
 | [Constraints](./constraints.md) | Limitations and best practices |
 | [Roadmap](./roadmap.md) | Future plans and planned features |
 
-## Getting Started
+## 2. Getting Started
 
 1. Read [Setup](./setup.md) for installation instructions
 2. Configure authentication following the setup guide

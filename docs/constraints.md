@@ -1,8 +1,8 @@
 # Constraints
 
-## Cluster Requirements
+## 1. Cluster Requirements
 
-### Supported Cluster Types
+### 1.1. Supported Cluster Types
 
 | Cluster Type | Supported | Notes |
 |--------------|-----------|-------|
@@ -10,13 +10,13 @@
 | Job cluster | No | No interactive API |
 | Serverless | No | Command Execution API not available |
 
-### Why Serverless is Not Supported
+### 1.2. Why Serverless is Not Supported
 
 This kernel uses the [Command Execution API](https://docs.databricks.com/api/workspace/commandexecution) to run code on Databricks clusters. This API is not available for serverless compute, which uses a different execution model.
 
-## Performance Considerations
+## 2. Performance Considerations
 
-### Cluster Startup Time
+### 2.1. Cluster Startup Time
 
 If the target cluster is stopped, the first code execution will wait for the cluster to start:
 
@@ -32,7 +32,7 @@ To minimize wait time:
 - Use cluster policies with auto-start
 - Consider warm pools for faster startup
 
-### File Synchronization
+### 2.2. File Synchronization
 
 Initial sync may take time depending on project size:
 
@@ -44,7 +44,7 @@ Initial sync may take time depending on project size:
 
 Subsequent syncs are faster due to hash-based change detection.
 
-### Execution Latency
+### 2.3. Execution Latency
 
 Each code execution involves network round-trips:
 
@@ -54,9 +54,9 @@ Each code execution involves network round-trips:
 
 For interactive development, this latency is typically acceptable. For tight loops, batch operations locally before sending to the cluster.
 
-## File Size Limits
+## 3. File Size Limits
 
-### Configurable Limits
+### 3.1. Configurable Limits
 
 Set limits in `.databricks-kernel.yaml`:
 
@@ -69,7 +69,7 @@ sync:
   max_size_mb: 1000.0
 ```
 
-### DBFS Limits
+### 3.2. DBFS Limits
 
 DBFS has its own limits:
 
@@ -80,15 +80,15 @@ DBFS has its own limits:
 
 The kernel handles chunked uploads automatically, but very large files may cause timeouts.
 
-### Recommendations
+### 3.3. Recommendations
 
 - Exclude large data files from sync
 - Use DBFS or cloud storage for datasets
 - Keep synchronized code under 100 MB
 
-## State Behavior
+## 4. State Behavior
 
-### Variable Persistence
+### 4.1. Variable Persistence
 
 Variables persist within a session but are lost on:
 
@@ -104,7 +104,7 @@ my_data = spark.read.parquet("/data/")
 # You must re-run the cell
 ```
 
-### No State Serialization
+### 4.2. No State Serialization
 
 Unlike some notebook environments, this kernel does not serialize state:
 
@@ -112,7 +112,7 @@ Unlike some notebook environments, this kernel does not serialize state:
 - No session persistence across restarts
 - All variables must be recreated after restart
 
-### Reconnection Behavior
+### 4.3. Reconnection Behavior
 
 When the kernel reconnects (e.g., after context timeout):
 
@@ -121,9 +121,9 @@ When the kernel reconnects (e.g., after context timeout):
 3. All variables are lost
 4. You must re-run previous cells
 
-## Exclude Patterns Best Practices
+## 5. Exclude Patterns Best Practices
 
-### Recommended Excludes
+### 5.1. Recommended Excludes
 
 ```yaml
 sync:
@@ -162,7 +162,7 @@ sync:
     - "logs/"
 ```
 
-### Pattern Syntax
+### 5.2. Pattern Syntax
 
 Patterns follow gitignore syntax:
 
@@ -173,26 +173,26 @@ Patterns follow gitignore syntax:
 | `**/temp` | temp directory at any level |
 | `!important.log` | Exclude from ignore (negate) |
 
-### Combining with .gitignore
+### 5.3. Combining with .gitignore
 
 The kernel automatically respects your `.gitignore` file. Additional patterns in `.databricks-kernel.yaml` are combined with gitignore patterns.
 
-## Security Considerations
+## 6. Security Considerations
 
-### Credentials
+### 6.1. Credentials
 
 - Never commit `.databricks-kernel.yaml` with credentials
 - Use environment variables for CI/CD
 - Tokens inherit user permissions
 
-### File Synchronization
+### 6.2. File Synchronization
 
 - Files are uploaded to your DBFS space
 - Files are extracted to your Workspace directory
 - Other users with workspace access may see synced files
 - Clean up occurs on kernel shutdown
 
-### Recommended .gitignore
+### 6.3. Recommended .gitignore
 
 ```gitignore
 # Kernel configuration (may contain cluster ID)
@@ -205,9 +205,9 @@ The kernel automatically respects your `.gitignore` file. Additional patterns in
 .databricks/
 ```
 
-## Known Limitations
+## 7. Known Limitations
 
-### No Interactive Input
+### 7.1. No Interactive Input
 
 `input()` and similar interactive prompts do not work:
 
@@ -216,7 +216,7 @@ The kernel automatically respects your `.gitignore` file. Additional patterns in
 name = input("Enter name: ")  # Don't use this
 ```
 
-### Display Limitations
+### 7.2. Display Limitations
 
 Some rich display types may not render correctly:
 
@@ -224,13 +224,13 @@ Some rich display types may not render correctly:
 - Some matplotlib backends
 - Real-time streaming output
 
-### Concurrent Execution
+### 7.3. Concurrent Execution
 
 Only one cell can execute at a time per kernel instance. Concurrent execution requires multiple notebooks/kernels.
 
-## Timeouts
+## 8. Timeouts
 
-### Default Timeouts
+### 8.1. Default Timeouts
 
 | Operation | Timeout |
 |-----------|---------|

@@ -1,8 +1,8 @@
 # Usage
 
-## Quick Start
+## 1. Quick Start
 
-### Starting JupyterLab
+### 1.1. Starting JupyterLab
 
 ```bash
 make jupyter
@@ -10,13 +10,13 @@ make jupyter
 
 This starts JupyterLab with the Databricks Session kernel available.
 
-### Selecting the Kernel
+### 1.2. Selecting the Kernel
 
 1. Open or create a notebook
 2. Click on the kernel selector (top right)
 3. Select "Databricks Session"
 
-### Basic Execution
+### 1.3. Basic Execution
 
 ```python
 # All code runs on the remote Databricks cluster
@@ -30,9 +30,9 @@ df.show()
 dbutils.fs.ls("/")
 ```
 
-## Configuration Reference
+## 2. Configuration Reference
 
-### Configuration File
+### 2.1. Configuration File
 
 Create `.databricks-kernel.yaml` in your project root:
 
@@ -63,7 +63,7 @@ sync:
   max_size_mb: 1000.0
 ```
 
-### Environment Variables
+### 2.2. Environment Variables
 
 | Variable | Description | Priority |
 |----------|-------------|----------|
@@ -73,7 +73,7 @@ sync:
 
 Environment variables take precedence over configuration file values.
 
-### Configuration Precedence
+### 2.3. Configuration Precedence
 
 For cluster_id:
 
@@ -86,9 +86,9 @@ For authentication (handled by Databricks SDK):
 2. Databricks CLI configuration (`~/.databrickscfg`)
 3. Cloud provider authentication
 
-## File Synchronization
+## 3. File Synchronization
 
-### How It Works
+### 3.1. How It Works
 
 The kernel automatically synchronizes your local project files to the Databricks cluster:
 
@@ -104,7 +104,7 @@ This allows you to import local modules in your notebooks:
 from src.my_module import MyClass
 ```
 
-### Exclude Patterns
+### 3.2. Exclude Patterns
 
 Files are excluded from synchronization based on:
 
@@ -133,7 +133,7 @@ sync:
     - "tests/"
 ```
 
-### Cache Behavior
+### 3.3. Cache Behavior
 
 The kernel maintains a hash cache (`.databricks-kernel-cache.json`) to detect file changes efficiently:
 
@@ -141,9 +141,9 @@ The kernel maintains a hash cache (`.databricks-kernel-cache.json`) to detect fi
 - Cache is stored locally in your project directory
 - Delete the cache file to force a full resync
 
-## Working with Spark
+## 4. Working with Spark
 
-### SparkSession
+### 4.1. SparkSession
 
 A pre-configured SparkSession is available as `spark`:
 
@@ -158,7 +158,7 @@ spark.sql("SELECT * FROM my_table").show()
 df.write.saveAsTable("my_new_table")
 ```
 
-### dbutils
+### 4.2. dbutils
 
 The `dbutils` object is available for Databricks utilities:
 
@@ -175,9 +175,9 @@ dbutils.widgets.text("param", "default")
 value = dbutils.widgets.get("param")
 ```
 
-## Kernel Management
+## 5. Kernel Management
 
-### Restarting the Kernel
+### 5.1. Restarting the Kernel
 
 Restarting the kernel:
 
@@ -187,7 +187,7 @@ Restarting the kernel:
 
 A full restart requires shutting down and starting a new kernel.
 
-### Shutting Down
+### 5.2. Shutting Down
 
 When you close the notebook or shutdown the kernel:
 
@@ -195,7 +195,7 @@ When you close the notebook or shutdown the kernel:
 - DBFS files are cleaned up
 - Workspace files are cleaned up
 
-### Reconnection
+### 5.3. Reconnection
 
 If the cluster restarts or the context becomes invalid:
 

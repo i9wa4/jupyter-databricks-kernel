@@ -1,20 +1,20 @@
 # Setup
 
-## Prerequisites
+## 1. Prerequisites
 
 - Python 3.11 or later
 - [mise](https://mise.jdx.dev/) for tool version management
 - Databricks workspace with access to a cluster
 
-## Installation
+## 2. Installation
 
-### 1. Install mise
+### 2.1. Install mise
 
 ```bash
 curl https://mise.run | sh
 ```
 
-### 2. Install Tools and Dependencies
+### 2.2. Install Tools and Dependencies
 
 ```bash
 # Install mise-managed tools
@@ -24,9 +24,9 @@ make install
 make sync
 ```
 
-## Databricks Configuration
+## 3. Databricks Configuration
 
-### Cluster Requirements
+### 3.1. Cluster Requirements
 
 This kernel requires a classic all-purpose cluster. The following cluster types are supported:
 
@@ -38,7 +38,7 @@ This kernel requires a classic all-purpose cluster. The following cluster types 
 
 Serverless clusters are not supported because the Command Execution API, which this kernel relies on, is not available for serverless compute.
 
-### Required Permissions
+### 3.2. Required Permissions
 
 The authenticated user or service principal needs:
 
@@ -48,11 +48,11 @@ The authenticated user or service principal needs:
 | Read/Write | DBFS `/tmp/` | Store synchronized files |
 | Read/Write | Workspace `/Users/{your-email}/` | Extract files for execution |
 
-## Authentication
+## 4. Authentication
 
 This kernel uses the [Databricks SDK for Python](https://docs.databricks.com/en/dev-tools/sdk-python.html), which supports multiple authentication methods.
 
-### Authentication Precedence
+### 4.1. Authentication Precedence
 
 The SDK resolves credentials in this order:
 
@@ -61,7 +61,7 @@ The SDK resolves credentials in this order:
 3. Azure CLI authentication (for Azure Databricks)
 4. Google Cloud authentication (for GCP Databricks)
 
-### Option 1: Environment Variables (Recommended for CI/CD)
+### 4.2. Option 1: Environment Variables (Recommended for CI/CD)
 
 Set the following environment variables:
 
@@ -71,7 +71,7 @@ export DATABRICKS_TOKEN=your-personal-access-token
 export DATABRICKS_CLUSTER_ID=your-cluster-id
 ```
 
-### Option 2: Databricks CLI Configuration
+### 4.3. Option 2: Databricks CLI Configuration
 
 If you have the Databricks CLI installed, configure it:
 
@@ -91,7 +91,7 @@ Or use `.databricks-kernel.yaml`:
 cluster_id: "your-cluster-id"
 ```
 
-### Option 3: Configuration File
+### 4.4. Option 3: Configuration File
 
 Create `.databricks-kernel.yaml` in your project root:
 
@@ -101,7 +101,7 @@ cluster_id: "0123-456789-abcdef12"
 
 The kernel will use Databricks CLI credentials for host and token.
 
-### Finding Your Cluster ID
+### 4.5. Finding Your Cluster ID
 
 1. Open your Databricks workspace
 2. Navigate to Compute
@@ -114,7 +114,7 @@ Or use the CLI:
 databricks clusters list
 ```
 
-## Verification
+## 5. Verification
 
 After setup, verify your configuration:
 
@@ -133,24 +133,24 @@ spark.version
 
 If the cluster is stopped, the first execution may take 5-6 minutes while the cluster starts.
 
-## Troubleshooting
+## 6. Troubleshooting
 
-### "DATABRICKS_CLUSTER_ID environment variable is not set"
+### 6.1. "DATABRICKS_CLUSTER_ID environment variable is not set"
 
 Set the cluster ID via environment variable or `.databricks-kernel.yaml`.
 
-### "Authentication error" or "Invalid token"
+### 6.2. "Authentication error" or "Invalid token"
 
 1. Verify your token is valid: `databricks auth token`
 2. Check token expiration
 3. Regenerate token if needed
 
-### "Cluster not found"
+### 6.3. "Cluster not found"
 
 1. Verify the cluster ID is correct
 2. Ensure you have permission to access the cluster
 3. Check if the cluster has been terminated
 
-### Long First Execution Time
+### 6.4. Long First Execution Time
 
 The first execution may take 5-6 minutes if the cluster is stopped. This is expected behavior as Databricks starts the cluster.

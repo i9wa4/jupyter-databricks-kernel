@@ -1,14 +1,14 @@
 # Use Cases
 
-## When to Use This Kernel
+## 1. When to Use This Kernel
 
 This kernel is designed for scenarios where you need remote compute resources while maintaining a local development experience.
 
-## Use Case 1: Remote GPU/Memory Workloads
+## 2. Use Case 1: Remote GPU/Memory Workloads
 
 Run GPU-accelerated or memory-intensive workloads on Databricks while developing locally in JupyterLab.
 
-### Example: Deep Learning with PyTorch
+### 2.1. Example: Deep Learning with PyTorch
 
 ```python
 # All code runs on the remote cluster with GPU access
@@ -31,7 +31,7 @@ for epoch in range(10):
     pass
 ```
 
-### Example: Large DataFrame Processing
+### 2.2. Example: Large DataFrame Processing
 
 ```python
 # Process large datasets using cluster memory
@@ -45,11 +45,11 @@ result = df.groupBy("category").agg(
 result.show()
 ```
 
-## Use Case 2: Local Module Development
+## 3. Use Case 2: Local Module Development
 
 Develop Python modules locally and seamlessly use them on the cluster.
 
-### Project Structure
+### 3.1. Project Structure
 
 ```text
 my-project/
@@ -63,7 +63,7 @@ my-project/
 └── .gitignore
 ```
 
-### Local Module
+### 3.2. Local Module
 
 ```python
 # src/data_processing.py
@@ -75,7 +75,7 @@ def transform_features(df):
     return df.withColumn("new_feature", ...)
 ```
 
-### Notebook Usage
+### 3.3. Notebook Usage
 
 ```python
 # In your notebook - modules are automatically synced
@@ -87,17 +87,17 @@ clean_df = clean_data(raw_df)
 features_df = transform_features(clean_df)
 ```
 
-### Development Workflow
+### 3.4. Development Workflow
 
 1. Edit `src/data_processing.py` locally
 2. Run notebook cell - files sync automatically
 3. Changes are immediately available on the cluster
 
-## Use Case 3: Team Collaboration
+## 4. Use Case 3: Team Collaboration
 
 Share code through version control while each team member runs on their own cluster.
 
-### Setup
+### 4.1. Setup
 
 ```yaml
 # .databricks-kernel.yaml (not committed)
@@ -116,7 +116,7 @@ Each team member:
 2. Creates their own `.databricks-kernel.yaml` with their cluster ID
 3. Runs notebooks on their assigned cluster
 
-## Comparison with Alternatives
+## 5. Comparison with Alternatives
 
 | Feature | This Kernel | Databricks Connect | Databricks CLI |
 |---------|-------------|-------------------|----------------|
@@ -130,32 +130,32 @@ Each team member:
 | Cluster State | Stateful session | Stateless calls | N/A |
 | Use Case | Remote execution | Local development with remote Spark | Deployment & CI/CD |
 
-### When to Use Each Tool
+### 5.1. When to Use Each Tool
 
-#### Use This Kernel When
+#### 5.1.1. Use This Kernel When
 
 - You need GPU or large memory resources
 - All Python code should run remotely
 - You want automatic file synchronization
 - You prefer JupyterLab for development
 
-#### Use Databricks Connect When
+#### 5.1.2. Use Databricks Connect When
 
 - You want local Python execution with remote Spark
 - You need IDE integration (VSCode, PyCharm)
 - Local packages must be used
 - You don't need GPU resources
 
-#### Use Databricks CLI When
+#### 5.1.3. Use Databricks CLI When
 
 - Deploying code to production
 - Running in CI/CD pipelines
 - Managing Databricks resources
 - Syncing files manually
 
-## Example: Complete Workflow
+## 6. Example: Complete Workflow
 
-### 1. Project Setup
+### 6.1. Project Setup
 
 ```bash
 # Create project
@@ -169,7 +169,7 @@ make sync
 echo 'cluster_id: "your-cluster-id"' > .databricks-kernel.yaml
 ```
 
-### 2. Create Module
+### 6.2. Create Module
 
 ```python
 # src/ml_pipeline.py
@@ -188,7 +188,7 @@ def create_pipeline(feature_cols, label_col):
     return Pipeline(stages=[assembler, rf])
 ```
 
-### 3. Develop in Notebook
+### 6.3. Develop in Notebook
 
 ```python
 # notebook.ipynb
@@ -206,7 +206,7 @@ predictions = model.transform(df)
 predictions.show()
 ```
 
-### 4. Iterate
+### 6.4. Iterate
 
 1. Modify `src/ml_pipeline.py` locally
 2. Re-run notebook cells
