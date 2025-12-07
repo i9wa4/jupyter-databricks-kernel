@@ -25,6 +25,7 @@ def mock_config() -> MagicMock:
     config.sync.enabled = True
     config.sync.source = "./src"
     config.sync.exclude = []
+    config.sync.use_gitignore = False
     return config
 
 
@@ -516,6 +517,26 @@ class TestDefaultExcludePatterns:
 class TestGitignorePatternMatching:
     """Tests for .gitignore-based pattern matching."""
 
+    @pytest.fixture
+    def file_sync_with_gitignore(self, tmp_path: Path) -> FileSync:
+        """Create a FileSync instance with use_gitignore enabled."""
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = str(tmp_path)
+        config.sync.exclude = []
+        config.sync.use_gitignore = True
+        return FileSync(config, "test-session")
+
+    @pytest.fixture
+    def file_sync_without_gitignore(self, tmp_path: Path) -> FileSync:
+        """Create a FileSync instance with use_gitignore disabled."""
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = str(tmp_path)
+        config.sync.exclude = []
+        config.sync.use_gitignore = False
+        return FileSync(config, "test-session")
+
     def test_excludes_databricks_directory(
         self, file_sync: FileSync, tmp_path: Path
     ) -> None:
@@ -534,8 +555,10 @@ class TestGitignorePatternMatching:
 
         assert file_sync._should_exclude(py_file, tmp_path) is False
 
-    def test_respects_gitignore(self, file_sync: FileSync, tmp_path: Path) -> None:
-        """Test that .gitignore patterns are respected."""
+    def test_respects_gitignore(
+        self, file_sync_with_gitignore: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that .gitignore patterns are respected when use_gitignore is True."""
         # Create a .gitignore file
         gitignore = tmp_path / ".gitignore"
         gitignore.write_text("*.log\ndata/\n.env\n")
@@ -549,25 +572,25 @@ class TestGitignorePatternMatching:
         env_file.touch()
 
         # Force reload of gitignore
-        file_sync._pathspec = None
+        file_sync_with_gitignore._pathspec = None
 
-        assert file_sync._should_exclude(log_file, tmp_path) is True
-        assert file_sync._should_exclude(data_dir, tmp_path) is True
-        assert file_sync._should_exclude(env_file, tmp_path) is True
+        assert file_sync_with_gitignore._should_exclude(log_file, tmp_path) is True
+        assert file_sync_with_gitignore._should_exclude(data_dir, tmp_path) is True
+        assert file_sync_with_gitignore._should_exclude(env_file, tmp_path) is True
 
     def test_does_not_exclude_without_gitignore(
-        self, file_sync: FileSync, tmp_path: Path
+        self, file_sync_with_gitignore: FileSync, tmp_path: Path
     ) -> None:
-        """Test that files are included if not in .gitignore."""
+        """Test that files are included if .gitignore file doesn't exist."""
         # No .gitignore file
         env_file = tmp_path / ".env"
         env_file.touch()
 
         # Force reload
-        file_sync._pathspec = None
+        file_sync_with_gitignore._pathspec = None
 
-        # .env is NOT excluded without .gitignore (matching Databricks CLI)
-        assert file_sync._should_exclude(env_file, tmp_path) is False
+        # .env is NOT excluded without .gitignore file
+        assert file_sync_with_gitignore._should_exclude(env_file, tmp_path) is False
 
     def test_user_exclude_patterns_applied(
         self, mock_config: MagicMock, tmp_path: Path
@@ -580,6 +603,37 @@ class TestGitignorePatternMatching:
         txt_file.touch()
 
         assert file_sync._should_exclude(txt_file, tmp_path) is True
+
+    def test_ignores_gitignore_when_disabled(
+        self, file_sync_without_gitignore: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that .gitignore patterns are ignored when use_gitignore is False."""
+        # Create a .gitignore file
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text("*.log\ndata/\n.env\n")
+
+        # Create files that would be excluded by .gitignore
+        log_file = tmp_path / "app.log"
+        log_file.touch()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        env_file = tmp_path / ".env"
+        env_file.touch()
+
+        # Force reload
+        file_sync_without_gitignore._pathspec = None
+
+        # These files should NOT be excluded because use_gitignore is False
+        assert file_sync_without_gitignore._should_exclude(log_file, tmp_path) is False
+        assert file_sync_without_gitignore._should_exclude(data_dir, tmp_path) is False
+        assert file_sync_without_gitignore._should_exclude(env_file, tmp_path) is False
+
+    def test_use_gitignore_default_is_true(self, tmp_path: Path) -> None:
+        """Test that use_gitignore defaults to True."""
+        from jupyter_databricks_kernel.config import Config
+
+        config = Config()
+        assert config.sync.use_gitignore is True
 
 
 class TestFileDeletion:

@@ -1,7 +1,7 @@
 """File synchronization to Databricks DBFS.
 
-This module implements file synchronization matching Databricks CLI behavior.
-It respects .gitignore files and always excludes the .databricks directory.
+This module implements file synchronization. It always excludes the .databricks
+directory. When use_gitignore is enabled, .gitignore patterns are also applied.
 """
 
 from __future__ import annotations
@@ -244,13 +244,9 @@ class FileCache:
 class FileSync:
     """Synchronizes local files to Databricks DBFS.
 
-    This class implements file synchronization matching Databricks CLI behavior:
-    - Respects .gitignore files in the source directory
-    - Always excludes .databricks directory
-
     The exclusion logic follows this priority:
     1. .databricks directory (always excluded)
-    2. .gitignore patterns (if present)
+    2. .gitignore patterns (only when use_gitignore is True)
     3. User-configured exclude patterns from config file
     """
 
@@ -325,11 +321,11 @@ class FileSync:
         return Path.cwd() / source
 
     def _load_gitignore_spec(self, source_path: Path) -> pathspec.PathSpec:
-        """Load and cache the combined PathSpec from .gitignore and default patterns.
+        """Load and cache the combined PathSpec from default and configured patterns.
 
         This method combines patterns from:
         1. DEFAULT_EXCLUDE_PATTERNS (always applied)
-        2. .gitignore file (if present)
+        2. .gitignore file (only when use_gitignore is True)
         3. User-configured exclude patterns
 
         Args:
@@ -341,7 +337,8 @@ class FileSync:
         gitignore_path = source_path / ".gitignore"
         gitignore_mtime = 0.0
 
-        if gitignore_path.exists():
+        # Only check .gitignore mtime if use_gitignore is enabled
+        if self.config.sync.use_gitignore and gitignore_path.exists():
             try:
                 gitignore_mtime = gitignore_path.stat().st_mtime
             except OSError:
@@ -357,8 +354,8 @@ class FileSync:
         # Add default patterns
         all_patterns.extend(DEFAULT_EXCLUDE_PATTERNS)
 
-        # Add .gitignore patterns if file exists
-        if gitignore_path.exists():
+        # Add .gitignore patterns only when use_gitignore is True
+        if self.config.sync.use_gitignore and gitignore_path.exists():
             try:
                 with open(gitignore_path) as f:
                     for line in f:
@@ -503,7 +500,8 @@ class FileSync:
                 raise FileSizeError(
                     f"Project size ({total_size_mb:.1f}MB) exceeds limit "
                     f"({max_total_size}MB)\n"
-                    "Consider excluding large files in .databricks-kernel.yaml"
+                    "Consider adding exclude patterns in pyproject.toml "
+                    "[tool.databricks-kernel.sync]"
                 )
 
         return file_sizes

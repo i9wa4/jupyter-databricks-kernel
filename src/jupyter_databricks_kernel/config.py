@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import os
+import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
-
-import yaml
 
 
 @dataclass
 class SyncConfig:
     """Configuration for file synchronization.
 
-    The sync module applies default exclusion patterns automatically,
-    including .gitignore rules. User-specified exclude patterns here
-    are applied in addition to those defaults.
+    The sync module applies default exclusion patterns automatically.
+    When use_gitignore is True, .gitignore rules are also applied.
+    User-specified exclude patterns are applied in addition to those defaults.
     """
 
     enabled: bool = True
@@ -24,6 +23,7 @@ class SyncConfig:
     exclude: list[str] = field(default_factory=list)
     max_size_mb: float | None = None
     max_file_size_mb: float | None = None
+    use_gitignore: bool = True
 
 
 @dataclass
@@ -35,46 +35,64 @@ class Config:
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> Config:
-        """Load configuration from environment variables and config file.
+        """Load configuration from environment variables and pyproject.toml.
+
+        Priority order:
+        1. Environment variables (highest priority)
+        2. pyproject.toml [tool.databricks-kernel]
+        3. Default values
 
         Args:
             config_path: Optional path to the config file.
-                         Defaults to .databricks-kernel.yaml in current directory.
+                         Defaults to pyproject.toml in current directory.
 
         Returns:
             Loaded configuration.
         """
         config = cls()
 
-        # Load from environment variables
+        # Load from environment variables (highest priority)
         config.cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
 
         # Determine config file path
         if config_path is None:
-            config_path = Path.cwd() / ".databricks-kernel.yaml"
+            config_path = Path.cwd() / "pyproject.toml"
 
         # Load from config file if it exists
         if config_path.exists():
-            config._load_from_file(config_path)
+            config._load_from_pyproject(config_path)
 
         return config
 
-    def _load_from_file(self, config_path: Path) -> None:
-        """Load configuration from a YAML file.
+    def _load_from_pyproject(self, config_path: Path) -> None:
+        """Load configuration from pyproject.toml.
 
         Args:
-            config_path: Path to the config file.
+            config_path: Path to pyproject.toml.
         """
-        with open(config_path) as f:
-            data: dict[str, Any] = yaml.safe_load(f) or {}
+        try:
+            with open(config_path, "rb") as f:
+                data = tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
+            print(
+                f"Warning: Failed to parse {config_path}: {e}. "
+                "Using default configuration.",
+                file=sys.stderr,
+            )
+            return
 
-        # Override cluster_id if specified in file
-        if "cluster_id" in data:
-            self.cluster_id = data["cluster_id"]
+        # Get [tool.databricks-kernel] section
+        tool_config = data.get("tool", {}).get("databricks-kernel", {})
+        if not tool_config:
+            return
+
+        # Override cluster_id if specified in file (but env var has priority)
+        if "cluster_id" in tool_config and self.cluster_id is None:
+            self.cluster_id = tool_config["cluster_id"]
 
         # Load sync configuration
-        if "sync" in data:
-            sync_data = data["sync"]
+        if "sync" in tool_config:
+            sync_data = tool_config["sync"]
             if "enabled" in sync_data:
                 self.sync.enabled = sync_data["enabled"]
             if "source" in sync_data:
@@ -85,6 +103,8 @@ class Config:
                 self.sync.max_size_mb = sync_data["max_size_mb"]
             if "max_file_size_mb" in sync_data:
                 self.sync.max_file_size_mb = sync_data["max_file_size_mb"]
+            if "use_gitignore" in sync_data:
+                self.sync.use_gitignore = sync_data["use_gitignore"]
 
     def validate(self) -> list[str]:
         """Validate the configuration.
@@ -103,5 +123,12 @@ class Config:
                 "DATABRICKS_CLUSTER_ID environment variable is not set. "
                 "Please set it to your Databricks cluster ID."
             )
+
+        # Validate sync size limits
+        if self.sync.max_size_mb is not None and self.sync.max_size_mb <= 0:
+            errors.append("max_size_mb must be a positive number.")
+
+        if self.sync.max_file_size_mb is not None and self.sync.max_file_size_mb <= 0:
+            errors.append("max_file_size_mb must be a positive number.")
 
         return errors
