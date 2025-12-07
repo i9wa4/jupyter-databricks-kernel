@@ -33,6 +33,7 @@ CACHE_VERSION = 1
 # See: https://github.com/databricks/cli/blob/main/libs/git/view.go
 DEFAULT_EXCLUDE_PATTERNS = [
     ".databricks",
+    CACHE_FILE_NAME,  # Exclude cache file to prevent infinite sync loop
 ]
 
 
@@ -162,6 +163,32 @@ class FileCache:
     def clear(self) -> None:
         """Clear the cache."""
         self._cache = {}
+
+    def get_deleted_files(self, current_files: list[Path]) -> list[str]:
+        """Get list of files that exist in cache but not in current files.
+
+        Args:
+            current_files: List of currently existing file paths.
+
+        Returns:
+            List of relative paths of deleted files.
+        """
+        current_rel_paths = {
+            str(f.relative_to(self.source_path)) for f in current_files
+        }
+        return [
+            rel_path
+            for rel_path in self._cache.keys()
+            if rel_path not in current_rel_paths
+        ]
+
+    def remove(self, rel_path: str) -> None:
+        """Remove a file from the cache.
+
+        Args:
+            rel_path: Relative path of the file to remove.
+        """
+        self._cache.pop(rel_path, None)
 
 
 class FileSync:
@@ -371,10 +398,12 @@ class FileSync:
         if not self._synced:
             return True
 
-        # Check if any files have been modified using hash comparison
+        # Check if any files have been modified or deleted using hash comparison
         all_files = self._get_all_files()
-        changed_files, _ = self._get_file_cache().get_changed_files(all_files)
-        return len(changed_files) > 0
+        file_cache = self._get_file_cache()
+        changed_files, _ = file_cache.get_changed_files(all_files)
+        deleted_files = file_cache.get_deleted_files(all_files)
+        return len(changed_files) > 0 or len(deleted_files) > 0
 
     def _validate_sizes(self, files: list[Path]) -> None:
         """Validate file sizes against configured limits.
@@ -489,6 +518,11 @@ class FileSync:
         client = self._ensure_client()
         with client.dbfs.open(dbfs_zip_path, write=True, overwrite=True) as f:
             f.write(zip_data)
+
+        # Remove deleted files from cache
+        deleted_files = file_cache.get_deleted_files(all_files)
+        for rel_path in deleted_files:
+            file_cache.remove(rel_path)
 
         # Update cache
         file_cache.update(all_files)
