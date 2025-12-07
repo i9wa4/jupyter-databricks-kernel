@@ -95,6 +95,25 @@ sync:
     - "data/"
 ```
 
+### 5.3. Size Limits
+
+You can configure file size limits to prevent syncing large files or projects:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `max_size_mb` | Maximum total project size in MB | No limit |
+| `max_file_size_mb` | Maximum individual file size in MB | No limit |
+
+Example configuration:
+
+```yaml
+sync:
+  max_size_mb: 100.0
+  max_file_size_mb: 10.0
+```
+
+If the size limit is exceeded, a `FileSizeError` is raised before syncing starts. The error message indicates which file or total size exceeded the limit, allowing you to adjust `exclude` patterns or increase the limit.
+
 ## 6. Documentation
 
 For detailed documentation, see the [docs](./docs/) directory:

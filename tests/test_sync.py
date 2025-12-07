@@ -443,9 +443,10 @@ class TestSyncStats:
 class TestDefaultExcludePatterns:
     """Tests for default exclude patterns matching Databricks CLI."""
 
-    def test_contains_only_databricks_directory(self) -> None:
-        """Test that only .databricks is excluded (matching Databricks CLI)."""
-        assert DEFAULT_EXCLUDE_PATTERNS == [".databricks"]
+    def test_contains_databricks_and_cache_file(self) -> None:
+        """Test that .databricks and cache file are excluded."""
+        assert ".databricks" in DEFAULT_EXCLUDE_PATTERNS
+        assert CACHE_FILE_NAME in DEFAULT_EXCLUDE_PATTERNS
 
 
 class TestGitignorePatternMatching:
@@ -515,3 +516,121 @@ class TestGitignorePatternMatching:
         txt_file.touch()
 
         assert file_sync._should_exclude(txt_file, tmp_path) is True
+
+
+class TestFileDeletion:
+    """Tests for file deletion detection."""
+
+    def test_get_deleted_files_empty_when_no_deletions(self, tmp_path: Path) -> None:
+        """Test that no deletions returns empty list."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+
+        deleted = cache.get_deleted_files([file1])
+        assert deleted == []
+
+    def test_get_deleted_files_detects_deletion(self, tmp_path: Path) -> None:
+        """Test that deleted files are detected."""
+        file1 = tmp_path / "file1.py"
+        file2 = tmp_path / "file2.py"
+        file1.write_text("content1")
+        file2.write_text("content2")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1, file2])
+
+        # Simulate file2 deletion by only passing file1
+        deleted = cache.get_deleted_files([file1])
+        assert "file2.py" in deleted
+
+    def test_remove_file_from_cache(self, tmp_path: Path) -> None:
+        """Test removing a file from cache."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+        cache.remove("file1.py")
+
+        # File should now be detected as changed (not in cache)
+        changed, _ = cache.get_changed_files([file1])
+        assert file1 in changed
+
+    def test_get_deleted_files_multiple_deletions(self, tmp_path: Path) -> None:
+        """Test detection of multiple deleted files."""
+        files = [tmp_path / f"file{i}.py" for i in range(5)]
+        for f in files:
+            f.write_text(f"content of {f.name}")
+
+        cache = FileCache(tmp_path)
+        cache.update(files)
+
+        # Keep only the first file
+        deleted = cache.get_deleted_files([files[0]])
+        assert len(deleted) == 4
+        for i in range(1, 5):
+            assert f"file{i}.py" in deleted
+
+
+class TestNeedsSyncIntegration:
+    """Integration tests for needs_sync() method."""
+
+    def test_needs_sync_detects_file_deletion(
+        self, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """Test that needs_sync returns True when files are deleted."""
+        mock_config.sync.source = str(tmp_path)
+        mock_config.sync.exclude = []
+        file_sync = FileSync(mock_config, "test-session")
+
+        # Create file and update cache
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+        file_sync._get_file_cache().update([file1])
+        file_sync._synced = True
+
+        # Delete the file
+        file1.unlink()
+
+        # Should detect deletion and return True
+        assert file_sync.needs_sync() is True
+
+    def test_needs_sync_returns_false_when_no_changes(
+        self, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """Test that needs_sync returns False when no files changed or deleted."""
+        mock_config.sync.source = str(tmp_path)
+        mock_config.sync.exclude = []
+        file_sync = FileSync(mock_config, "test-session")
+
+        # Create file and update cache
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+        file_sync._get_file_cache().update([file1])
+        file_sync._synced = True
+
+        # No changes - should return False
+        assert file_sync.needs_sync() is False
+
+    def test_needs_sync_detects_file_modification(
+        self, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """Test that needs_sync returns True when files are modified."""
+        mock_config.sync.source = str(tmp_path)
+        mock_config.sync.exclude = []
+        file_sync = FileSync(mock_config, "test-session")
+
+        # Create file and update cache
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+        file_sync._get_file_cache().update([file1])
+        file_sync._synced = True
+
+        # Modify the file
+        file1.write_text("modified content")
+
+        # Should detect modification and return True
+        assert file_sync.needs_sync() is True
