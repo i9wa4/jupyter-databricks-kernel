@@ -573,3 +573,64 @@ class TestFileDeletion:
         assert len(deleted) == 4
         for i in range(1, 5):
             assert f"file{i}.py" in deleted
+
+
+class TestNeedsSyncIntegration:
+    """Integration tests for needs_sync() method."""
+
+    def test_needs_sync_detects_file_deletion(
+        self, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """Test that needs_sync returns True when files are deleted."""
+        mock_config.sync.source = str(tmp_path)
+        mock_config.sync.exclude = []
+        file_sync = FileSync(mock_config, "test-session")
+
+        # Create file and update cache
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+        file_sync._get_file_cache().update([file1])
+        file_sync._synced = True
+
+        # Delete the file
+        file1.unlink()
+
+        # Should detect deletion and return True
+        assert file_sync.needs_sync() is True
+
+    def test_needs_sync_returns_false_when_no_changes(
+        self, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """Test that needs_sync returns False when no files changed or deleted."""
+        mock_config.sync.source = str(tmp_path)
+        mock_config.sync.exclude = []
+        file_sync = FileSync(mock_config, "test-session")
+
+        # Create file and update cache
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+        file_sync._get_file_cache().update([file1])
+        file_sync._synced = True
+
+        # No changes - should return False
+        assert file_sync.needs_sync() is False
+
+    def test_needs_sync_detects_file_modification(
+        self, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """Test that needs_sync returns True when files are modified."""
+        mock_config.sync.source = str(tmp_path)
+        mock_config.sync.exclude = []
+        file_sync = FileSync(mock_config, "test-session")
+
+        # Create file and update cache
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+        file_sync._get_file_cache().update([file1])
+        file_sync._synced = True
+
+        # Modify the file
+        file1.write_text("modified content")
+
+        # Should detect modification and return True
+        assert file_sync.needs_sync() is True
