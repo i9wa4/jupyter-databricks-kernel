@@ -6,6 +6,7 @@ directory. When use_gitignore is enabled, .gitignore patterns are also applied.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import io
 import json
@@ -36,8 +37,46 @@ CACHE_VERSION = 1
 DEFAULT_EXCLUDE_PATTERNS = [
     ".databricks",
     ".git",
-    CACHE_FILE_NAME,  # Exclude cache file to prevent infinite sync loop
+    CACHE_FILE_NAME,  # Exclude legacy cache file in project root
 ]
+
+
+def get_cache_dir() -> Path:
+    """Get XDG-compliant cache directory path.
+
+    Returns the cache directory following XDG Base Directory specification:
+    - If $XDG_CACHE_HOME is set: $XDG_CACHE_HOME/jupyter-databricks-kernel
+    - Otherwise: ~/.cache/jupyter-databricks-kernel
+
+    Note: The directory is NOT created by this function. It will be created
+    by save() when the cache is written.
+
+    Returns:
+        Path to the cache directory.
+    """
+    xdg_cache = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache:
+        base = Path(xdg_cache)
+    else:
+        base = Path.home() / ".cache"
+
+    return base / "jupyter-databricks-kernel"
+
+
+def get_project_hash(source_path: Path) -> str:
+    """Generate a unique hash for the project based on absolute path.
+
+    Uses SHA-256 hash of the resolved absolute path, truncated to 16 characters.
+    This provides sufficient uniqueness while keeping filenames reasonable.
+
+    Args:
+        source_path: Path to the project source directory.
+
+    Returns:
+        16-character hexadecimal hash string.
+    """
+    abs_path = str(source_path.resolve())
+    return hashlib.sha256(abs_path.encode()).hexdigest()[:16]
 
 
 class FileSizeError(Exception):
@@ -76,10 +115,20 @@ class FileCache:
         """Load cache from file after initialization."""
         self._load()
 
-    @property
+    @functools.cached_property
     def cache_path(self) -> Path:
-        """Get the cache file path."""
-        return self.source_path / CACHE_FILE_NAME
+        """Get the cache file path.
+
+        Returns XDG-compliant cache path:
+        $XDG_CACHE_HOME/jupyter-databricks-kernel/<project_hash>.json
+        or ~/.cache/jupyter-databricks-kernel/<project_hash>.json
+
+        Note: This is a cached_property to avoid recalculating the hash
+        on every access. The source_path is immutable after initialization.
+        """
+        cache_dir = get_cache_dir()
+        project_hash = get_project_hash(self.source_path)
+        return cache_dir / f"{project_hash}.json"
 
     def _load(self) -> None:
         """Load cache from file. Falls back to empty cache on error."""
@@ -110,6 +159,9 @@ class FileCache:
         fd = None
         tmp_path = None
         try:
+            # Ensure cache directory exists
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+
             # Preserve permissions from existing file if present
             original_mode = None
             if self.cache_path.exists():
