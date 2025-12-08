@@ -23,6 +23,11 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 1. Install the kernel:
 
    ```bash
+   # With uv
+   uv pip install jupyter-databricks-kernel
+   uv run python -m jupyter_databricks_kernel.install
+
+   # With pip
    pip install jupyter-databricks-kernel
    python -m jupyter_databricks_kernel.install
    ```
@@ -38,7 +43,7 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 3. Start JupyterLab and select "Databricks Session" kernel:
 
    ```bash
-   jupyter lab
+   jupyter-lab
    ```
 
 4. Run a simple test:
