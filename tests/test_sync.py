@@ -413,7 +413,7 @@ class TestValidateSizes:
         file1.write_bytes(b"x" * 1000)  # 1KB
 
         # Should not raise
-        file_sync_with_size_limit._validate_sizes([file1])
+        file_sync_with_size_limit._validate_sizes([file1], tmp_path)
 
     def test_validate_sizes_file_too_large(
         self, file_sync_with_size_limit: FileSync, tmp_path: Path
@@ -423,7 +423,7 @@ class TestValidateSizes:
         large_file.write_bytes(b"x" * (600 * 1024))  # 600KB > 0.5MB limit
 
         with pytest.raises(FileSizeError) as exc_info:
-            file_sync_with_size_limit._validate_sizes([large_file])
+            file_sync_with_size_limit._validate_sizes([large_file], tmp_path)
 
         assert "large.txt" in str(exc_info.value)
         assert "exceeds limit" in str(exc_info.value)
@@ -439,7 +439,7 @@ class TestValidateSizes:
 
         files = list(tmp_path.glob("*.txt"))
         with pytest.raises(FileSizeError) as exc_info:
-            file_sync_with_size_limit._validate_sizes(files)
+            file_sync_with_size_limit._validate_sizes(files, tmp_path)
 
         assert "Project size" in str(exc_info.value)
         assert "exceeds limit" in str(exc_info.value)
@@ -452,7 +452,7 @@ class TestValidateSizes:
         large_file.write_bytes(b"x" * (2 * 1024 * 1024))  # 2MB
 
         # Should not raise when no limits configured
-        file_sync_no_limit._validate_sizes([large_file])
+        file_sync_no_limit._validate_sizes([large_file], tmp_path)
 
 
 class TestFormatSize:
@@ -465,12 +465,12 @@ class TestFormatSize:
 
     def test_format_kilobytes(self, file_sync: FileSync) -> None:
         """Test formatting kilobytes."""
-        assert file_sync._format_size(1024) == "1.0 KB"
+        assert file_sync._format_size(1024) == "1 KB"
         assert file_sync._format_size(2560) == "2.5 KB"
 
     def test_format_megabytes(self, file_sync: FileSync) -> None:
         """Test formatting megabytes."""
-        assert file_sync._format_size(1024 * 1024) == "1.0 MB"
+        assert file_sync._format_size(1024 * 1024) == "1 MB"
         assert file_sync._format_size(int(2.5 * 1024 * 1024)) == "2.5 MB"
 
 
