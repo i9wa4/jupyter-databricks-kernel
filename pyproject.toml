@@ -9,6 +9,17 @@ description = "A Jupyter kernel for complete remote execution on Databricks clus
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Jupyter",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
     "databricks-sdk>=0.30.0,<1.0.0",
     "ipykernel>=6.20.0",
