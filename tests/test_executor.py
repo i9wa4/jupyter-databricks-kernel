@@ -210,3 +210,55 @@ class TestExecutionResult:
         """Test that reconnected can be set to True."""
         result = ExecutionResult(status="ok", reconnected=True)
         assert result.reconnected is True
+
+
+class TestEnsureClusterRunning:
+    """Tests for _ensure_cluster_running method."""
+
+    def test_starts_terminated_cluster(self, executor: DatabricksExecutor) -> None:
+        """Test that a terminated cluster is started."""
+        from databricks.sdk.service.compute import State
+
+        mock_client = MagicMock()
+        mock_cluster = MagicMock()
+        mock_cluster.state = State.TERMINATED
+
+        mock_client.clusters.get.return_value = mock_cluster
+        executor.client = mock_client
+
+        executor._ensure_cluster_running()
+
+        mock_client.clusters.start.assert_called_once_with("test-cluster-id")
+        mock_client.clusters.wait_get_cluster_running.assert_called_once_with(
+            "test-cluster-id"
+        )
+
+    def test_does_nothing_when_cluster_running(
+        self, executor: DatabricksExecutor
+    ) -> None:
+        """Test that no action is taken when cluster is already running."""
+        from databricks.sdk.service.compute import State
+
+        mock_client = MagicMock()
+        mock_cluster = MagicMock()
+        mock_cluster.state = State.RUNNING
+
+        mock_client.clusters.get.return_value = mock_cluster
+        executor.client = mock_client
+
+        executor._ensure_cluster_running()
+
+        mock_client.clusters.start.assert_not_called()
+        mock_client.clusters.wait_get_cluster_running.assert_not_called()
+
+    def test_does_nothing_without_cluster_id(self, mock_config: MagicMock) -> None:
+        """Test that no action is taken when cluster_id is not configured."""
+        mock_config.cluster_id = None
+        executor = DatabricksExecutor(mock_config)
+
+        mock_client = MagicMock()
+        executor.client = mock_client
+
+        executor._ensure_cluster_running()
+
+        mock_client.clusters.get.assert_not_called()

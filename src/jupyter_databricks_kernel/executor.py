@@ -67,8 +67,28 @@ class DatabricksExecutor:
             self.client = WorkspaceClient()
         return self.client
 
+    def _ensure_cluster_running(self) -> None:
+        """Ensure the cluster is running, starting it if necessary.
+
+        If the cluster is in TERMINATED state, this method will start it
+        and wait until it reaches RUNNING state.
+        """
+        if not self.config.cluster_id:
+            return
+
+        client = self._ensure_client()
+        cluster = client.clusters.get(self.config.cluster_id)
+
+        if cluster.state == compute.State.TERMINATED:
+            logger.info("Cluster is terminated, starting...")
+            client.clusters.start(self.config.cluster_id)
+            client.clusters.wait_get_cluster_running(self.config.cluster_id)
+            logger.info("Cluster is now running")
+
     def create_context(self) -> None:
         """Create an execution context on the Databricks cluster."""
+        self._ensure_cluster_running()
+
         if self.context_id is not None:
             return  # Context already exists
 
