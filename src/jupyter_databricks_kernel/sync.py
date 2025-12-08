@@ -36,6 +36,7 @@ CACHE_VERSION = 1
 # See: https://github.com/databricks/cli/blob/main/libs/git/view.go
 DEFAULT_EXCLUDE_PATTERNS = [
     ".databricks",
+    ".git",
     CACHE_FILE_NAME,  # Exclude legacy cache file in project root
 ]
 
