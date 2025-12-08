@@ -32,15 +32,33 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
    python -m jupyter_databricks_kernel.install
    ```
 
-2. Set environment variables:
+   Install options:
+
+   | Option          | Description                                                   |
+   | ------          | -----------                                                   |
+   | (default)       | Install to current venv (`sys.prefix`)                        |
+   | `--user`        | Install to user directory (`~/.local/share/jupyter/kernels/`) |
+   | `--prefix PATH` | Install to custom path                                        |
+
+2. Configure authentication and cluster:
 
    ```bash
+   # Required: cluster ID (or set in pyproject.toml)
+   export DATABRICKS_CLUSTER_ID=your-cluster-id
+
+   # Authentication: choose one of the following
+   # Option A: Environment variables
    export DATABRICKS_HOST=https://your-workspace.cloud.databricks.com
    export DATABRICKS_TOKEN=your-personal-access-token
-   export DATABRICKS_CLUSTER_ID=your-cluster-id
+
+   # Option B: Use ~/.databrickscfg (DEFAULT profile)
+   # Option C: Use specific profile from ~/.databrickscfg
+   export DATABRICKS_CONFIG_PROFILE=your-profile-name
    ```
 
-3. Start JupyterLab and select "Databricks Session" kernel:
+   For more authentication options, see [Databricks SDK Authentication][sdk-auth].
+
+3. Start JupyterLab and select "Databricks" kernel:
 
    ```bash
    jupyter-lab
@@ -82,9 +100,6 @@ use_gitignore = true
 | `sync.max_size_mb`      | Maximum total project size in MB   | No limit |
 | `sync.max_file_size_mb` | Maximum individual file size in MB | No limit |
 | `sync.use_gitignore`    | Respect .gitignore patterns        | `true`   |
-
-For authentication options including OAuth and SSO, see
-[Databricks SDK Authentication][sdk-auth].
 
 [sdk-auth]: https://docs.databricks.com/en/dev-tools/sdk-python.html#authentication
 
