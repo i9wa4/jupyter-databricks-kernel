@@ -40,13 +40,14 @@ DEFAULT_EXCLUDE_PATTERNS = [
 
 
 def get_cache_dir() -> Path:
-    """Get XDG-compliant cache directory.
+    """Get XDG-compliant cache directory path.
 
     Returns the cache directory following XDG Base Directory specification:
     - If $XDG_CACHE_HOME is set: $XDG_CACHE_HOME/jupyter-databricks-kernel
     - Otherwise: ~/.cache/jupyter-databricks-kernel
 
-    The directory is created if it doesn't exist.
+    Note: The directory is NOT created by this function. It will be created
+    by save() when the cache is written.
 
     Returns:
         Path to the cache directory.
@@ -57,9 +58,7 @@ def get_cache_dir() -> Path:
     else:
         base = Path.home() / ".cache"
 
-    cache_dir = base / "jupyter-databricks-kernel"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir
+    return base / "jupyter-databricks-kernel"
 
 
 def get_project_hash(source_path: Path) -> str:

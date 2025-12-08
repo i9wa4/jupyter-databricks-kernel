@@ -58,8 +58,6 @@ class TestGetCacheDir:
     def test_default_cache_dir(self, tmp_path: Path) -> None:
         """Test default cache directory when XDG_CACHE_HOME is not set."""
         with patch.dict(os.environ, {}, clear=True):
-            # Remove XDG_CACHE_HOME if it exists
-            os.environ.pop("XDG_CACHE_HOME", None)
             with patch("pathlib.Path.home", return_value=tmp_path):
                 cache_dir = get_cache_dir()
                 expected = tmp_path / ".cache" / "jupyter-databricks-kernel"
@@ -72,13 +70,13 @@ class TestGetCacheDir:
             expected = tmp_path / "jupyter-databricks-kernel"
             assert cache_dir == expected
 
-    def test_creates_directory(self, tmp_path: Path) -> None:
-        """Test that cache directory is created if it doesn't exist."""
+    def test_does_not_create_directory(self, tmp_path: Path) -> None:
+        """Test that get_cache_dir does not create the directory."""
         xdg_cache = tmp_path / "custom_cache"
         with patch.dict(os.environ, {"XDG_CACHE_HOME": str(xdg_cache)}):
             cache_dir = get_cache_dir()
-            assert cache_dir.exists()
-            assert cache_dir.is_dir()
+            # Directory should NOT be created by get_cache_dir
+            assert not cache_dir.exists()
 
 
 class TestGetProjectHash:
@@ -318,6 +316,25 @@ class TestFileCache:
         # File should not be changed
         assert len(changed) == 0
         assert stats.skipped_files == 1
+
+    def test_save_creates_directory(self, tmp_path: Path) -> None:
+        """Test that save() creates cache directory if it doesn't exist."""
+        xdg_cache = tmp_path / "custom_cache"
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": str(xdg_cache)}):
+            file1 = tmp_path / "file1.py"
+            file1.write_text("content")
+
+            cache = FileCache(tmp_path)
+            # Directory should not exist before save
+            assert not cache.cache_path.parent.exists()
+
+            cache.update([file1])
+            cache.save()
+
+            # Directory and file should exist after save
+            assert cache.cache_path.parent.exists()
+            assert cache.cache_path.parent.is_dir()
+            assert cache.cache_path.exists()
 
     def test_cache_version_mismatch(self, tmp_path: Path) -> None:
         """Test that cache is reset on version mismatch."""
