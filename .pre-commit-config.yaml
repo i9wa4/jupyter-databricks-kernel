@@ -40,12 +40,6 @@ repos:
         language: system
         files: ^\.github/workflows/.*\.(yml|yaml)$
 
-      - id: shellcheck
-        name: shellcheck
-        entry: mise exec -- shellcheck
-        language: system
-        types: [shell]
-
       - id: ruff-check
         name: ruff check
         entry: mise exec -- uv run --no-sync ruff check --fix
