@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,6 +16,8 @@ from jupyter_databricks_kernel.sync import (
     FileSizeError,
     FileSync,
     SyncStats,
+    get_cache_dir,
+    get_project_hash,
 )
 
 
@@ -47,6 +50,66 @@ def file_sync_with_patterns(mock_config: MagicMock) -> FileSync:
         "**/*.log",
     ]
     return FileSync(mock_config, "test-session")
+
+
+class TestGetCacheDir:
+    """Tests for get_cache_dir function."""
+
+    def test_default_cache_dir(self, tmp_path: Path) -> None:
+        """Test default cache directory when XDG_CACHE_HOME is not set."""
+        with patch.dict(os.environ, {}, clear=True):
+            # Remove XDG_CACHE_HOME if it exists
+            os.environ.pop("XDG_CACHE_HOME", None)
+            with patch("pathlib.Path.home", return_value=tmp_path):
+                cache_dir = get_cache_dir()
+                expected = tmp_path / ".cache" / "jupyter-databricks-kernel"
+                assert cache_dir == expected
+
+    def test_with_xdg_cache_home(self, tmp_path: Path) -> None:
+        """Test cache directory when XDG_CACHE_HOME is set."""
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
+            cache_dir = get_cache_dir()
+            expected = tmp_path / "jupyter-databricks-kernel"
+            assert cache_dir == expected
+
+    def test_creates_directory(self, tmp_path: Path) -> None:
+        """Test that cache directory is created if it doesn't exist."""
+        xdg_cache = tmp_path / "custom_cache"
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": str(xdg_cache)}):
+            cache_dir = get_cache_dir()
+            assert cache_dir.exists()
+            assert cache_dir.is_dir()
+
+
+class TestGetProjectHash:
+    """Tests for get_project_hash function."""
+
+    def test_deterministic(self, tmp_path: Path) -> None:
+        """Test that same path produces same hash."""
+        hash1 = get_project_hash(tmp_path)
+        hash2 = get_project_hash(tmp_path)
+        assert hash1 == hash2
+
+    def test_different_paths_produce_different_hashes(self, tmp_path: Path) -> None:
+        """Test that different paths produce different hashes."""
+        path1 = tmp_path / "project1"
+        path2 = tmp_path / "project2"
+        path1.mkdir()
+        path2.mkdir()
+
+        hash1 = get_project_hash(path1)
+        hash2 = get_project_hash(path2)
+        assert hash1 != hash2
+
+    def test_hash_length(self, tmp_path: Path) -> None:
+        """Test that hash is 16 characters."""
+        project_hash = get_project_hash(tmp_path)
+        assert len(project_hash) == 16
+
+    def test_hash_is_hexadecimal(self, tmp_path: Path) -> None:
+        """Test that hash contains only hexadecimal characters."""
+        project_hash = get_project_hash(tmp_path)
+        assert all(c in "0123456789abcdef" for c in project_hash)
 
 
 class TestSanitizePathComponent:
@@ -245,9 +308,8 @@ class TestFileCache:
         cache1.update([file1])
         cache1.save()
 
-        # Verify cache file exists
-        cache_file = tmp_path / CACHE_FILE_NAME
-        assert cache_file.exists()
+        # Verify cache file exists at XDG-compliant path
+        assert cache1.cache_path.exists()
 
         # Load cache in new instance
         cache2 = FileCache(tmp_path)
@@ -262,12 +324,15 @@ class TestFileCache:
         file1 = tmp_path / "file1.py"
         file1.write_text("content")
 
-        # Create cache file with wrong version
-        cache_file = tmp_path / CACHE_FILE_NAME
+        # Get cache path and create cache file with wrong version
+        cache = FileCache(tmp_path)
+        cache_file = cache.cache_path
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
         cache_file.write_text(
             json.dumps({"version": 999, "files": {"file1.py": "abc"}})
         )
 
+        # Reload cache to pick up the corrupted file
         cache = FileCache(tmp_path)
         changed, stats, _ = cache.get_changed_files([file1])
 
@@ -279,8 +344,10 @@ class TestFileCache:
         file1 = tmp_path / "file1.py"
         file1.write_text("content")
 
-        # Create corrupted cache file
-        cache_file = tmp_path / CACHE_FILE_NAME
+        # Get cache path and create corrupted cache file
+        cache = FileCache(tmp_path)
+        cache_file = cache.cache_path
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
         cache_file.write_text("not valid json {{{")
 
         cache = FileCache(tmp_path)
