@@ -10,7 +10,7 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 ## 1. Features
 
 - Execute Python code entirely on Databricks clusters
-- Seamless integration with JupyterLab
+- Works with VS Code, JupyterLab, and other Jupyter frontends
 
 ## 2. Requirements
 
@@ -58,16 +58,25 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 
    For authentication options, see [Databricks SDK Authentication][sdk-auth].
 
-3. Start JupyterLab and select "Databricks" kernel:
+3. Open a notebook and select "Databricks" kernel:
+
+   **VS Code:**
+
+   1. Install the [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter)
+   2. Open a `.ipynb` file
+   3. Click "Select Kernel" and choose "Databricks"
+
+   **JupyterLab:**
 
    ```bash
    jupyter-lab
    ```
 
+   Select "Databricks" from the kernel list.
+
 4. Run a simple test:
 
    ```python
-   print("Hello from Databricks!")
    spark.version
    ```
 
