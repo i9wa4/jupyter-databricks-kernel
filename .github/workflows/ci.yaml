@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -61,7 +61,7 @@ jobs:
           mise exec -- pre-commit run --all-files
 
   test:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -94,7 +94,7 @@ jobs:
   ci:
     needs: [lint, test]
     if: always()
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check results

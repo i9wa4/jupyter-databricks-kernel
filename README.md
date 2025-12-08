@@ -176,6 +176,10 @@ mise exec -- pre-commit run --all-files
 
 For all supported runtimes, see [Databricks Runtime release notes](https://docs.databricks.com/aws/en/release-notes/runtime/).
 
-## 9. License
+## 9. Changelog
+
+See [Releases](https://github.com/i9wa4/jupyter-databricks-kernel/releases)
+
+## 10. License
 
 Apache License 2.0
