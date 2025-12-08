@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-jupyter-databricks-session-kernel is a Jupyter kernel that executes Python code entirely on Databricks clusters. Unlike Databricks Connect, which runs Python locally and only sends Spark operations to the cluster, this kernel sends all code to the remote cluster for execution.
+jupyter-databricks-kernel is a Jupyter kernel that executes Python code entirely on Databricks clusters. Unlike Databricks Connect, which runs Python locally and only sends Spark operations to the cluster, this kernel sends all code to the remote cluster for execution.
 
 ### 1.1. Design Principle: Complete Remote Execution
 
@@ -72,7 +72,7 @@ flowchart TD
     end
 
     subgraph Databricks["Databricks Workspace"]
-        DBFS[DBFS /tmp/jupyter_kernel/]
+        DBFS[DBFS /tmp/jupyter_databricks_kernel/]
         WS[Workspace /Users/.../]
         CL[Cluster]
         CTX[Execution Context]
@@ -134,8 +134,8 @@ For each code execution:
 
 On kernel shutdown:
 
-1. Clean up DBFS files (`/tmp/jupyter_kernel/{session_id}/`)
-2. Clean up Workspace files (`/Workspace/Users/{user}/jupyter_kernel/{session_id}/`)
+1. Clean up DBFS files (`/tmp/jupyter_databricks_kernel/{session_id}/`)
+2. Clean up Workspace files (`/Workspace/Users/{user}/jupyter_databricks_kernel/{session_id}/`)
 3. Destroy execution context
 
 ## 5. File Synchronization Architecture
@@ -154,8 +154,8 @@ Files are synchronized using a ZIP-based approach:
 
 | Location | Purpose |
 |----------|---------|
-| DBFS `/tmp/jupyter_kernel/{session_id}/` | Temporary ZIP storage |
-| Workspace `/Workspace/Users/{user}/jupyter_kernel/{session_id}/` | Extracted files for execution |
+| DBFS `/tmp/jupyter_databricks_kernel/{session_id}/` | Temporary ZIP storage |
+| Workspace `/Workspace/Users/{user}/jupyter_databricks_kernel/{session_id}/` | Extracted files for execution |
 
 ### 5.3. Exclude Patterns
 
@@ -163,7 +163,7 @@ Files are excluded based on:
 
 1. `.databricks` directory (always excluded)
 2. `.gitignore` patterns (if present)
-3. User-configured exclude patterns in `.databricks-kernel.yaml`
+3. User-configured exclude patterns in `.jupyter-databricks-kernel.yaml`
 
 ## 6. Reconnection Mechanism
 

@@ -52,10 +52,10 @@ class TestConfigLoad:
         """Test loading configuration from pyproject.toml."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.databricks-kernel]
+[tool.jupyter-databricks-kernel]
 cluster_id = "toml-cluster-456"
 
-[tool.databricks-kernel.sync]
+[tool.jupyter-databricks-kernel.sync]
 enabled = false
 source = "./src"
 exclude = ["*.log", "data/"]
@@ -82,7 +82,7 @@ use_gitignore = true
         """Test that environment variable takes priority over pyproject.toml."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.databricks-kernel]
+[tool.jupyter-databricks-kernel]
 cluster_id = "toml-cluster-456"
 """)
         monkeypatch.chdir(tmp_path)
@@ -106,7 +106,7 @@ cluster_id = "toml-cluster-456"
     def test_load_empty_tool_section(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test loading when [tool.databricks-kernel] section doesn't exist."""
+        """Test loading when [tool.jupyter-databricks-kernel] section doesn't exist."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
 [project]
@@ -126,7 +126,7 @@ name = "my-project"
         custom_config = tmp_path / "custom" / "config.toml"
         custom_config.parent.mkdir(parents=True)
         custom_config.write_text("""
-[tool.databricks-kernel]
+[tool.jupyter-databricks-kernel]
 cluster_id = "custom-cluster-789"
 """)
         monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)

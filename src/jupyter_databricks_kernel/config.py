@@ -39,7 +39,7 @@ class Config:
 
         Priority order:
         1. Environment variables (highest priority)
-        2. pyproject.toml [tool.databricks-kernel]
+        2. pyproject.toml [tool.jupyter-databricks-kernel]
         3. Default values
 
         Args:
@@ -81,8 +81,8 @@ class Config:
             )
             return
 
-        # Get [tool.databricks-kernel] section
-        tool_config = data.get("tool", {}).get("databricks-kernel", {})
+        # Get [tool.jupyter-databricks-kernel] section
+        tool_config = data.get("tool", {}).get("jupyter-databricks-kernel", {})
         if not tool_config:
             return
 

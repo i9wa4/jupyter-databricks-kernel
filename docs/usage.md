@@ -34,7 +34,7 @@ dbutils.fs.ls("/")
 
 ### 2.1. Configuration File
 
-Create `.databricks-kernel.yaml` in your project root:
+Create `.jupyter-databricks-kernel.yaml` in your project root:
 
 ```yaml
 # Required: Databricks cluster ID
@@ -78,7 +78,7 @@ Environment variables take precedence over configuration file values.
 For cluster_id:
 
 1. `DATABRICKS_CLUSTER_ID` environment variable
-2. `cluster_id` in `.databricks-kernel.yaml`
+2. `cluster_id` in `.jupyter-databricks-kernel.yaml`
 
 For authentication (handled by Databricks SDK):
 
@@ -110,7 +110,7 @@ Files are excluded from synchronization based on:
 
 1. `.databricks` directory (always excluded, matching Databricks CLI)
 2. Patterns in your `.gitignore` file
-3. Patterns in `.databricks-kernel.yaml` `sync.exclude`
+3. Patterns in `.jupyter-databricks-kernel.yaml` `sync.exclude`
 
 Example `.gitignore`:
 
@@ -122,7 +122,7 @@ __pycache__/
 *.egg-info/
 ```
 
-Example additional exclusions in `.databricks-kernel.yaml`:
+Example additional exclusions in `.jupyter-databricks-kernel.yaml`:
 
 ```yaml
 sync:
@@ -135,7 +135,7 @@ sync:
 
 ### 3.3. Cache Behavior
 
-The kernel maintains a hash cache (`.databricks-kernel-cache.json`) to detect file changes efficiently:
+The kernel maintains a hash cache (`.jupyter-databricks-kernel-cache.json`) to detect file changes efficiently:
 
 - Only changed files trigger a new sync
 - Cache is stored locally in your project directory

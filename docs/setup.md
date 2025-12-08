@@ -85,7 +85,7 @@ This creates `~/.databrickscfg` with your credentials. Then set only the cluster
 export DATABRICKS_CLUSTER_ID=your-cluster-id
 ```
 
-Or use `.databricks-kernel.yaml`:
+Or use `.jupyter-databricks-kernel.yaml`:
 
 ```yaml
 cluster_id: "your-cluster-id"
@@ -93,7 +93,7 @@ cluster_id: "your-cluster-id"
 
 ### 4.4. Option 3: Configuration File
 
-Create `.databricks-kernel.yaml` in your project root:
+Create `.jupyter-databricks-kernel.yaml` in your project root:
 
 ```yaml
 cluster_id: "0123-456789-abcdef12"
@@ -137,7 +137,7 @@ If the cluster is stopped, the first execution may take 5-6 minutes while the cl
 
 ### 6.1. "DATABRICKS_CLUSTER_ID environment variable is not set"
 
-Set the cluster ID via environment variable or `.databricks-kernel.yaml`.
+Set the cluster ID via environment variable or `.jupyter-databricks-kernel.yaml`.
 
 ### 6.2. "Authentication error" or "Invalid token"
 

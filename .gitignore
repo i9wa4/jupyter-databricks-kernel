@@ -207,4 +207,4 @@ marimo/_lsp/
 __marimo__/
 
 # Databricks kernel cache
-.databricks-kernel-cache.json
+.jupyter-databricks-kernel-cache.json

@@ -70,7 +70,7 @@ databricks configure --token
 You can configure the kernel in `pyproject.toml`:
 
 ```toml
-[tool.databricks-kernel]
+[tool.jupyter-databricks-kernel]
 cluster_id = "0123-456789-abcdef12"
 ```
 
@@ -91,7 +91,7 @@ By default, all patterns in your `.gitignore` file are respected (matching Datab
 You can disable this behavior if needed:
 
 ```toml
-[tool.databricks-kernel.sync]
+[tool.jupyter-databricks-kernel.sync]
 use_gitignore = false
 ```
 
@@ -100,7 +100,7 @@ use_gitignore = false
 You can add additional exclusion patterns:
 
 ```toml
-[tool.databricks-kernel.sync]
+[tool.jupyter-databricks-kernel.sync]
 exclude = ["*.log", "data/"]
 ```
 
@@ -116,7 +116,7 @@ You can configure file size limits to prevent syncing large files or projects:
 Example configuration:
 
 ```toml
-[tool.databricks-kernel.sync]
+[tool.jupyter-databricks-kernel.sync]
 max_size_mb = 100.0
 max_file_size_mb = 10.0
 ```
@@ -126,10 +126,10 @@ If the size limit is exceeded, a `FileSizeError` is raised before syncing starts
 ### 5.5. Full Configuration Example
 
 ```toml
-[tool.databricks-kernel]
+[tool.jupyter-databricks-kernel]
 cluster_id = "0123-456789-abcdef12"
 
-[tool.databricks-kernel.sync]
+[tool.jupyter-databricks-kernel.sync]
 enabled = true
 source = "."
 exclude = ["*.log", "data/", "*.tmp"]

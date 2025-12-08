@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CACHE_FILE_NAME = ".databricks-kernel-cache.json"
+CACHE_FILE_NAME = ".jupyter-databricks-kernel-cache.json"
 CACHE_VERSION = 1
 
 # Default patterns that are always excluded, matching Databricks CLI behavior.
@@ -559,7 +559,7 @@ class FileSync:
                     f"Project size ({total_size_mb:.1f}MB) exceeds limit "
                     f"({max_total_size}MB)\n"
                     "Consider adding exclude patterns in pyproject.toml "
-                    "[tool.databricks-kernel.sync]"
+                    "[tool.jupyter-databricks-kernel.sync]"
                 )
 
         return file_sizes
@@ -636,7 +636,7 @@ class FileSync:
         """
         start_time = time.time()
 
-        dbfs_dir = f"/tmp/jupyter_kernel/{self.session_id}"
+        dbfs_dir = f"/tmp/jupyter_databricks_kernel/{self.session_id}"
         dbfs_zip_path = f"{dbfs_dir}/project.zip"
 
         # Get all files and validate sizes (also returns size info for reuse)
@@ -697,7 +697,7 @@ class FileSync:
         # Use /Workspace/Users/{email}/ which is allowed on Shared clusters
         user_name = self._get_user_name()
         workspace_extract_dir = (
-            f"/Workspace/Users/{user_name}/jupyter_kernel/{self.session_id}"
+            f"/Workspace/Users/{user_name}/jupyter_databricks_kernel/{self.session_id}"
         )
 
         return f"""
@@ -740,7 +740,7 @@ del _extract_dir, _dbfs_zip_path, _local_zip
         if not self._synced:
             return
 
-        dbfs_dir = f"/tmp/jupyter_kernel/{self.session_id}"
+        dbfs_dir = f"/tmp/jupyter_databricks_kernel/{self.session_id}"
 
         try:
             client = self._ensure_client()
@@ -751,7 +751,8 @@ del _extract_dir, _dbfs_zip_path, _local_zip
         # Also clean up Workspace directory if user_name is known
         if self._user_name is not None:
             workspace_dir = (
-                f"/Workspace/Users/{self._user_name}/jupyter_kernel/{self.session_id}"
+                f"/Workspace/Users/{self._user_name}"
+                f"/jupyter_databricks_kernel/{self.session_id}"
             )
             try:
                 client = self._ensure_client()

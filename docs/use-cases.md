@@ -59,7 +59,7 @@ my-project/
 │   └── models.py
 ├── notebooks/
 │   └── analysis.ipynb
-├── .databricks-kernel.yaml
+├── .jupyter-databricks-kernel.yaml
 └── .gitignore
 ```
 
@@ -100,20 +100,20 @@ Share code through version control while each team member runs on their own clus
 ### 4.1. Setup
 
 ```yaml
-# .databricks-kernel.yaml (not committed)
+# .jupyter-databricks-kernel.yaml (not committed)
 cluster_id: "team-member-cluster-id"
 ```
 
 ```gitignore
 # .gitignore
-.databricks-kernel.yaml
-.databricks-kernel-cache.json
+.jupyter-databricks-kernel.yaml
+.jupyter-databricks-kernel-cache.json
 ```
 
 Each team member:
 
 1. Clones the repository
-2. Creates their own `.databricks-kernel.yaml` with their cluster ID
+2. Creates their own `.jupyter-databricks-kernel.yaml` with their cluster ID
 3. Runs notebooks on their assigned cluster
 
 ## 5. Comparison with Alternatives
@@ -166,7 +166,7 @@ make install
 make sync
 
 # Configure cluster
-echo 'cluster_id: "your-cluster-id"' > .databricks-kernel.yaml
+echo 'cluster_id: "your-cluster-id"' > .jupyter-databricks-kernel.yaml
 ```
 
 ### 6.2. Create Module

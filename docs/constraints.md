@@ -58,7 +58,7 @@ For interactive development, this latency is typically acceptable. For tight loo
 
 ### 3.1. Configurable Limits
 
-Set limits in `.databricks-kernel.yaml`:
+Set limits in `.jupyter-databricks-kernel.yaml`:
 
 ```yaml
 sync:
@@ -175,13 +175,13 @@ Patterns follow gitignore syntax:
 
 ### 5.3. Combining with .gitignore
 
-The kernel automatically respects your `.gitignore` file. Additional patterns in `.databricks-kernel.yaml` are combined with gitignore patterns.
+The kernel automatically respects your `.gitignore` file. Additional patterns in `.jupyter-databricks-kernel.yaml` are combined with gitignore patterns.
 
 ## 6. Security Considerations
 
 ### 6.1. Credentials
 
-- Never commit `.databricks-kernel.yaml` with credentials
+- Never commit `.jupyter-databricks-kernel.yaml` with credentials
 - Use environment variables for CI/CD
 - Tokens inherit user permissions
 
@@ -196,10 +196,10 @@ The kernel automatically respects your `.gitignore` file. Additional patterns in
 
 ```gitignore
 # Kernel configuration (may contain cluster ID)
-.databricks-kernel.yaml
+.jupyter-databricks-kernel.yaml
 
 # Cache file
-.databricks-kernel-cache.json
+.jupyter-databricks-kernel-cache.json
 
 # Databricks directory
 .databricks/
