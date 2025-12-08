@@ -5,22 +5,24 @@
 - PyPI Trusted Publisher configured
 - Write access to repository
 
+## Version Management
+
+This project uses [hatch-vcs](https://github.com/ofek/hatch-vcs) for automatic
+version management. The package version is derived from git tags, so there is
+no need to manually update `pyproject.toml`.
+
+- Tag format: `vX.Y.Z` (e.g., `v0.2.0`)
+- Package version: `X.Y.Z` (e.g., `0.2.0`)
+
 ## Release Process
 
-1. Update version in `pyproject.toml`
-2. Commit the change
-
-   ```bash
-   git commit -m "chore: bump version to X.Y.Z"
-   ```
-
-3. Create a tag
+1. Create a tag
 
    ```bash
    git tag vX.Y.Z
    ```
 
-4. Push to remote
+2. Push to remote
 
    ```bash
    git push origin main --tags
