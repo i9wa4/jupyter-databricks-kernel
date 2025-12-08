@@ -64,3 +64,15 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+
+      - id: rumdl-check
+        name: rumdl check
+        entry: mise exec -- rumdl check
+        language: system
+        types: [markdown]
+
+      - id: rumdl-format
+        name: rumdl format
+        entry: mise exec -- rumdl fmt
+        language: system
+        types: [markdown]

@@ -56,7 +56,7 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
    export DATABRICKS_CONFIG_PROFILE=your-profile-name
    ```
 
-   For more authentication options, see [Databricks SDK Authentication][sdk-auth].
+   For authentication options, see [Databricks SDK Authentication][sdk-auth].
 
 3. Start JupyterLab and select "Databricks" kernel:
 
