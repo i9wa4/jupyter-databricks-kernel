@@ -1,6 +1,6 @@
 # Documentation
 
-Welcome to the jupyter-databricks-session-kernel documentation.
+Welcome to the jupyter-databricks-kernel documentation.
 
 ## 1. Quick Links
 

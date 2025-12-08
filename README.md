@@ -1,4 +1,4 @@
-# jupyter-databricks-session-kernel
+# jupyter-databricks-kernel
 
 A Jupyter kernel for complete remote execution on Databricks clusters.
 
