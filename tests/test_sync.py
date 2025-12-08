@@ -508,9 +508,10 @@ class TestSyncStats:
 class TestDefaultExcludePatterns:
     """Tests for default exclude patterns matching Databricks CLI."""
 
-    def test_contains_databricks_and_cache_file(self) -> None:
-        """Test that .databricks and cache file are excluded."""
+    def test_contains_databricks_git_and_cache_file(self) -> None:
+        """Test that .databricks, .git, and cache file are excluded."""
         assert ".databricks" in DEFAULT_EXCLUDE_PATTERNS
+        assert ".git" in DEFAULT_EXCLUDE_PATTERNS
         assert CACHE_FILE_NAME in DEFAULT_EXCLUDE_PATTERNS
 
 
