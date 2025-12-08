@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "jupyter-databricks-kernel"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A Jupyter kernel for complete remote execution on Databricks clusters"
 readme = "README.md"
 license = "Apache-2.0"
@@ -24,6 +24,12 @@ dev = [
     "pytest>=7.0.0",
     "ruff>=0.14.0",
 ]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/jupyter_databricks_kernel/_version.py"
 
 [tool.ruff]
 target-version = "py311"
