@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import uuid
 from typing import Any
 
@@ -214,12 +215,43 @@ class DatabricksKernel(Kernel):
                 self._handle_reconnection()
 
             if result.status == "ok":
-                if not silent and result.output:
-                    self.send_response(
-                        self.iopub_socket,
-                        "stream",
-                        {"name": "stdout", "text": result.output},
-                    )
+                if not silent:
+                    # Display text output
+                    if result.output:
+                        self.send_response(
+                            self.iopub_socket,
+                            "stream",
+                            {"name": "stdout", "text": result.output},
+                        )
+
+                    # Display images
+                    if result.images:
+                        for image_data in result.images:
+                            mime_type, base64_data = self._parse_data_url(image_data)
+                            if mime_type and base64_data:
+                                self.send_response(
+                                    self.iopub_socket,
+                                    "display_data",
+                                    {
+                                        "data": {mime_type: base64_data},
+                                        "metadata": {},
+                                    },
+                                )
+
+                    # Display table
+                    if result.table_data is not None:
+                        html_table = self._generate_html_table(
+                            result.table_data, result.table_schema
+                        )
+                        self.send_response(
+                            self.iopub_socket,
+                            "display_data",
+                            {
+                                "data": {"text/html": html_table},
+                                "metadata": {},
+                            },
+                        )
+
                 return {
                     "status": "ok",
                     "execution_count": self.execution_count,
@@ -268,6 +300,66 @@ class DatabricksKernel(Kernel):
                 "evalue": error_msg,
                 "traceback": [error_msg],
             }
+
+    def _parse_data_url(self, data_url: str) -> tuple[str | None, str | None]:
+        """Parse a Data URL into MIME type and base64 data.
+
+        Args:
+            data_url: Data URL string (e.g., "data:image/png;base64,iVBOR...").
+
+        Returns:
+            Tuple of (mime_type, base64_data) or (None, None) if invalid.
+        """
+        if not data_url.startswith("data:"):
+            return None, None
+
+        try:
+            # data:image/png;base64,iVBOR...
+            header, base64_data = data_url.split(",", 1)
+            # data:image/png;base64
+            mime_part = header[5:]  # Remove "data:"
+            # image/png;base64 -> image/png
+            mime_type = mime_part.split(";")[0]
+            return mime_type, base64_data
+        except (ValueError, IndexError):
+            return None, None
+
+    def _generate_html_table(
+        self,
+        data: list[list[Any]],
+        schema: list[dict[str, Any]] | None,
+    ) -> str:
+        """Generate an HTML table from table data.
+
+        Args:
+            data: List of rows, where each row is a list of cell values.
+            schema: Optional list of column definitions with "name" keys.
+
+        Returns:
+            HTML table string.
+        """
+        html_parts = ['<table border="1" class="dataframe">']
+
+        # Header
+        if schema:
+            html_parts.append("<thead><tr>")
+            for col in schema:
+                name = col.get("name", "")
+                html_parts.append(f"<th>{html.escape(str(name))}</th>")
+            html_parts.append("</tr></thead>")
+
+        # Body
+        html_parts.append("<tbody>")
+        for row in data:
+            html_parts.append("<tr>")
+            for cell in row:
+                cell_str = "" if cell is None else str(cell)
+                html_parts.append(f"<td>{html.escape(cell_str)}</td>")
+            html_parts.append("</tr>")
+        html_parts.append("</tbody>")
+
+        html_parts.append("</table>")
+        return "".join(html_parts)
 
     async def do_shutdown(self, restart: bool) -> dict[str, Any]:
         """Shutdown the kernel.
