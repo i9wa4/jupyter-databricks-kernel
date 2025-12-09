@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import configparser
 import os
 import sys
 import tomllib
@@ -35,15 +36,16 @@ class Config:
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> Config:
-        """Load configuration from environment variables and pyproject.toml.
+        """Load configuration from environment variables and config files.
 
-        Priority order:
-        1. Environment variables (highest priority)
-        2. pyproject.toml [tool.jupyter-databricks-kernel]
-        3. Default values
+        Priority order for cluster_id:
+        1. DATABRICKS_CLUSTER_ID environment variable (highest priority)
+        2. ~/.databrickscfg cluster_id (from active profile)
+
+        Sync settings are loaded from pyproject.toml.
 
         Args:
-            config_path: Optional path to the config file.
+            config_path: Optional path to the pyproject.toml file for sync settings.
                          Defaults to pyproject.toml in current directory.
 
         Returns:
@@ -51,21 +53,58 @@ class Config:
         """
         config = cls()
 
-        # Load from environment variables (highest priority)
+        # Load cluster_id from environment variable (highest priority)
         config.cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
 
-        # Determine config file path
+        # Load cluster_id from databrickscfg if not set by env var
+        if config.cluster_id is None:
+            config._load_cluster_id_from_databrickscfg()
+
+        # Determine config file path for sync settings
         if config_path is None:
             config_path = Path.cwd() / "pyproject.toml"
 
-        # Load from config file if it exists
+        # Load sync settings from config file if it exists
         if config_path.exists():
             config._load_from_pyproject(config_path)
 
         return config
 
+    def _load_cluster_id_from_databrickscfg(self) -> None:
+        """Load cluster_id from ~/.databrickscfg.
+
+        Reads cluster_id from the active profile in ~/.databrickscfg.
+        Active profile is determined by DATABRICKS_CONFIG_PROFILE
+        environment variable, or 'DEFAULT' if not set.
+        """
+        databrickscfg_path = Path.home() / ".databrickscfg"
+        if not databrickscfg_path.exists():
+            return
+
+        profile = os.environ.get("DATABRICKS_CONFIG_PROFILE", "DEFAULT")
+
+        parser = configparser.ConfigParser()
+        try:
+            parser.read(databrickscfg_path)
+        except configparser.Error as e:
+            print(
+                f"Warning: Failed to parse {databrickscfg_path}: {e}. "
+                "Skipping databrickscfg configuration.",
+                file=sys.stderr,
+            )
+            return
+
+        if profile not in parser:
+            return
+
+        if "cluster_id" in parser[profile]:
+            self.cluster_id = parser[profile]["cluster_id"]
+
     def _load_from_pyproject(self, config_path: Path) -> None:
-        """Load configuration from pyproject.toml.
+        """Load sync configuration from pyproject.toml.
+
+        Note: cluster_id is no longer read from pyproject.toml.
+        Use DATABRICKS_CLUSTER_ID environment variable or ~/.databrickscfg.
 
         Args:
             config_path: Path to pyproject.toml.
@@ -85,10 +124,6 @@ class Config:
         tool_config = data.get("tool", {}).get("jupyter-databricks-kernel", {})
         if not tool_config:
             return
-
-        # Override cluster_id if specified in file (but env var has priority)
-        if "cluster_id" in tool_config and self.cluster_id is None:
-            self.cluster_id = tool_config["cluster_id"]
 
         # Load sync configuration
         if "sync" in tool_config:
@@ -120,8 +155,9 @@ class Config:
 
         if not self.cluster_id:
             errors.append(
-                "DATABRICKS_CLUSTER_ID environment variable is not set. "
-                "Please set it to your Databricks cluster ID."
+                "Cluster ID is not configured. "
+                "Please set DATABRICKS_CLUSTER_ID environment variable or "
+                "run 'databricks auth login --configure-cluster'."
             )
 
         # Validate sync size limits

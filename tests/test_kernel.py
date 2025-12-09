@@ -237,3 +237,177 @@ class TestExecuteWithReconnection:
 
         mock_handle.assert_called_once()
         assert result["status"] == "ok"
+
+
+class TestParseDataUrl:
+    """Tests for _parse_data_url method."""
+
+    def test_parse_valid_data_url(self, mock_kernel: DatabricksKernel) -> None:
+        """Test parsing a valid Data URL."""
+        data_url = "data:image/png;base64,iVBORw0KGgo="
+        mime_type, base64_data = mock_kernel._parse_data_url(data_url)
+
+        assert mime_type == "image/png"
+        assert base64_data == "iVBORw0KGgo="
+
+    def test_parse_jpeg_data_url(self, mock_kernel: DatabricksKernel) -> None:
+        """Test parsing a JPEG Data URL."""
+        data_url = "data:image/jpeg;base64,/9j/4AAQ="
+        mime_type, base64_data = mock_kernel._parse_data_url(data_url)
+
+        assert mime_type == "image/jpeg"
+        assert base64_data == "/9j/4AAQ="
+
+    def test_parse_invalid_data_url(self, mock_kernel: DatabricksKernel) -> None:
+        """Test parsing an invalid Data URL."""
+        mime_type, base64_data = mock_kernel._parse_data_url("not-a-data-url")
+
+        assert mime_type is None
+        assert base64_data is None
+
+    def test_parse_malformed_data_url(self, mock_kernel: DatabricksKernel) -> None:
+        """Test parsing a malformed Data URL."""
+        mime_type, base64_data = mock_kernel._parse_data_url("data:nocomma")
+
+        assert mime_type is None
+        assert base64_data is None
+
+
+class TestGenerateHtmlTable:
+    """Tests for _generate_html_table method."""
+
+    def test_generate_table_with_schema(self, mock_kernel: DatabricksKernel) -> None:
+        """Test generating an HTML table with schema."""
+        data = [["val1", "val2"], ["val3", "val4"]]
+        schema = [{"name": "col1"}, {"name": "col2"}]
+
+        html = mock_kernel._generate_html_table(data, schema)
+
+        assert '<table border="1" class="dataframe">' in html
+        assert "<th>col1</th>" in html
+        assert "<th>col2</th>" in html
+        assert "<td>val1</td>" in html
+        assert "<td>val4</td>" in html
+
+    def test_generate_table_without_schema(self, mock_kernel: DatabricksKernel) -> None:
+        """Test generating an HTML table without schema."""
+        data = [["val1", "val2"]]
+
+        html = mock_kernel._generate_html_table(data, None)
+
+        assert "<thead>" not in html
+        assert "<td>val1</td>" in html
+
+    def test_generate_table_with_none_values(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test generating an HTML table with None values."""
+        data = [[None, "val2"]]
+
+        html = mock_kernel._generate_html_table(data, None)
+
+        assert "<td></td>" in html
+        assert "<td>val2</td>" in html
+
+    def test_generate_table_escapes_html(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that HTML characters are escaped."""
+        data = [["<script>alert('xss')</script>"]]
+
+        html = mock_kernel._generate_html_table(data, None)
+
+        assert "&lt;script&gt;" in html
+        assert "<script>" not in html
+
+
+class TestDisplayResults:
+    """Tests for displaying different result types."""
+
+    def test_display_image_result(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that images are displayed via display_data."""
+        mock_kernel._initialized = True
+        mock_kernel.executor = MagicMock()
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel.file_sync.needs_sync.return_value = False
+
+        from jupyter_databricks_kernel.executor import ExecutionResult
+
+        mock_kernel.executor.execute.return_value = ExecutionResult(
+            status="ok",
+            images=["data:image/png;base64,iVBORw0KGgo="],
+        )
+
+        asyncio.run(mock_kernel.do_execute("display(plt)", silent=False))
+
+        # Check display_data was called
+        calls = mock_kernel.send_response.call_args_list
+        display_calls = [c for c in calls if c[0][1] == "display_data"]
+        assert len(display_calls) == 1
+        assert "image/png" in display_calls[0][0][2]["data"]
+
+    def test_display_multiple_images(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that multiple images are displayed."""
+        mock_kernel._initialized = True
+        mock_kernel.executor = MagicMock()
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel.file_sync.needs_sync.return_value = False
+
+        from jupyter_databricks_kernel.executor import ExecutionResult
+
+        mock_kernel.executor.execute.return_value = ExecutionResult(
+            status="ok",
+            images=[
+                "data:image/png;base64,img1=",
+                "data:image/png;base64,img2=",
+            ],
+        )
+
+        asyncio.run(mock_kernel.do_execute("display(figs)", silent=False))
+
+        calls = mock_kernel.send_response.call_args_list
+        display_calls = [c for c in calls if c[0][1] == "display_data"]
+        assert len(display_calls) == 2
+
+    def test_display_table_result(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that tables are displayed as HTML."""
+        mock_kernel._initialized = True
+        mock_kernel.executor = MagicMock()
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel.file_sync.needs_sync.return_value = False
+
+        from jupyter_databricks_kernel.executor import ExecutionResult
+
+        mock_kernel.executor.execute.return_value = ExecutionResult(
+            status="ok",
+            table_data=[["val1", "val2"]],
+            table_schema=[{"name": "col1"}, {"name": "col2"}],
+        )
+
+        asyncio.run(mock_kernel.do_execute("df.show()", silent=False))
+
+        calls = mock_kernel.send_response.call_args_list
+        display_calls = [c for c in calls if c[0][1] == "display_data"]
+        assert len(display_calls) == 1
+        assert "text/html" in display_calls[0][0][2]["data"]
+
+    def test_silent_mode_suppresses_display(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that silent mode suppresses all output."""
+        mock_kernel._initialized = True
+        mock_kernel.executor = MagicMock()
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel.file_sync.needs_sync.return_value = False
+
+        from jupyter_databricks_kernel.executor import ExecutionResult
+
+        mock_kernel.executor.execute.return_value = ExecutionResult(
+            status="ok",
+            output="text output",
+            images=["data:image/png;base64,abc="],
+            table_data=[["val"]],
+        )
+
+        asyncio.run(mock_kernel.do_execute("code", silent=True))
+
+        # No output should be sent
+        mock_kernel.send_response.assert_not_called()

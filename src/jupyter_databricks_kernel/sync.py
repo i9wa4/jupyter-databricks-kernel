@@ -358,15 +358,22 @@ class FileSync:
     3. User-configured exclude patterns from config file
     """
 
-    def __init__(self, config: Config, session_id: str) -> None:
+    def __init__(
+        self,
+        config: Config,
+        session_id: str,
+        client: WorkspaceClient | None = None,
+    ) -> None:
         """Initialize file sync.
 
         Args:
             config: Kernel configuration.
             session_id: Session identifier for DBFS paths.
+            client: Optional WorkspaceClient instance for dependency injection.
+                If not provided, a client will be created lazily when needed.
         """
         self.config = config
-        self.client: WorkspaceClient | None = None
+        self.client = client
         self.session_id = session_id
         self._synced = False
         self._user_name: str | None = None

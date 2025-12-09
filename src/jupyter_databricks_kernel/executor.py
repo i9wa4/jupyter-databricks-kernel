@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import re
 import time
 from dataclasses import dataclass, replace
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service import compute
+from databricks.sdk.service.compute import ResultType
 
 if TYPE_CHECKING:
     from .config import Config
@@ -42,19 +44,28 @@ class ExecutionResult:
     error: str | None = None
     traceback: list[str] | None = None
     reconnected: bool = False
+    images: list[str] | None = None
+    table_data: list[list[Any]] | None = None
+    table_schema: list[dict[str, Any]] | None = None
 
 
 class DatabricksExecutor:
     """Manages Databricks execution context and command execution."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(
+        self,
+        config: Config,
+        client: WorkspaceClient | None = None,
+    ) -> None:
         """Initialize the executor.
 
         Args:
             config: Kernel configuration.
+            client: Optional WorkspaceClient instance for dependency injection.
+                If not provided, a client will be created lazily when needed.
         """
         self.config = config
-        self.client: WorkspaceClient | None = None
+        self.client = client
         self.context_id: str | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
@@ -232,19 +243,108 @@ class DatabricksExecutor:
                     traceback=results.summary.split("\n") if results.summary else None,
                 )
 
-            # Get output
+            # Process results based on result_type
             output = None
-            if results.data is not None:
-                output = str(results.data)
-            elif results.summary:
-                output = results.summary
+            images = None
+            table_data = None
+            table_schema = None
+
+            result_type = results.result_type
+
+            if result_type == ResultType.IMAGE:
+                # Single image
+                if results.file_name:
+                    processed = self._process_image(results.file_name)
+                    if processed:
+                        images = [processed]
+            elif result_type == ResultType.IMAGES:
+                # Multiple images
+                if results.file_names:
+                    images = []
+                    for file_name in results.file_names:
+                        processed = self._process_image(file_name)
+                        if processed:
+                            images.append(processed)
+            elif result_type == ResultType.TABLE:
+                # Table data
+                table_data = results.data
+                table_schema = results.schema
+            else:
+                # TEXT or other types
+                if results.data is not None:
+                    output = str(results.data)
+                elif results.summary:
+                    output = results.summary
 
             return ExecutionResult(
                 status="ok",
                 output=output,
+                images=images if images else None,
+                table_data=table_data,
+                table_schema=table_schema,
             )
 
         return ExecutionResult(status=status)
+
+    def _process_image(self, file_ref: str) -> str | None:
+        """Process an image reference to a Data URL.
+
+        Args:
+            file_ref: Either a Data URL or a FileStore path.
+
+        Returns:
+            Data URL string or None if processing fails.
+        """
+        if file_ref.startswith("data:"):
+            # Already a Data URL
+            return file_ref
+        else:
+            # FileStore path - download and convert to Data URL
+            return self._download_filestore_image(file_ref)
+
+    def _download_filestore_image(self, path: str) -> str | None:
+        """Download an image from FileStore and convert to Data URL.
+
+        Args:
+            path: FileStore path (e.g., /plots/xxx.png).
+
+        Returns:
+            Data URL string or None if download fails.
+        """
+        try:
+            client = self._ensure_client()
+            # /plots/xxx.png -> /FileStore/plots/xxx.png
+            full_path = f"/FileStore{path}"
+            response = client.files.download(full_path)
+            if response.contents is None:
+                logger.warning("No content in FileStore download response")
+                return None
+            content = response.contents.read()
+            base64_data = base64.b64encode(content).decode("utf-8")
+            mime_type = self._get_mime_type(path)
+            return f"data:{mime_type};base64,{base64_data}"
+        except Exception as e:
+            logger.warning("Failed to download image from FileStore: %s", e)
+            return None
+
+    def _get_mime_type(self, path: str) -> str:
+        """Get MIME type from file path extension.
+
+        Args:
+            path: File path.
+
+        Returns:
+            MIME type string.
+        """
+        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        mime_types = {
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "svg": "image/svg+xml",
+        }
+        return mime_types.get(ext, "image/png")
 
     def destroy_context(self) -> None:
         """Destroy the execution context."""

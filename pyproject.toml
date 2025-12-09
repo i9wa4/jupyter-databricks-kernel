@@ -89,3 +89,7 @@ warn_unused_ignores = false
 testpaths = ["tests"]
 addopts = "-v"
 pythonpath = ["src"]
+markers = [
+    "integration: marks tests as integration tests (require real Databricks cluster)",
+    "slow: marks tests as slow-running (deselect with '-m \"not slow\"')",
+]

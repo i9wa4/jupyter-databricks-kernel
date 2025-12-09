@@ -89,7 +89,7 @@ jobs:
 
       - name: Run tests
         run: |
-          mise exec -- uv run --python ${{ matrix.python-version }} pytest
+          mise exec -- uv run --python ${{ matrix.python-version }} pytest -m "not integration"
 
   ci:
     needs: [lint, test]

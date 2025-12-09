@@ -46,15 +46,12 @@ class TestConfigLoad:
         config = Config.load()
         assert config.cluster_id == "env-cluster-123"
 
-    def test_load_from_pyproject(
+    def test_load_sync_from_pyproject(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test loading configuration from pyproject.toml."""
+        """Test loading sync configuration from pyproject.toml."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
-[tool.jupyter-databricks-kernel]
-cluster_id = "toml-cluster-456"
-
 [tool.jupyter-databricks-kernel.sync]
 enabled = false
 source = "./src"
@@ -64,33 +61,18 @@ max_file_size_mb = 10.0
 use_gitignore = true
 """)
         monkeypatch.chdir(tmp_path)
-        # Clear env var to ensure pyproject.toml is used
         monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
 
         config = Config.load()
-        assert config.cluster_id == "toml-cluster-456"
+        # cluster_id is not loaded from pyproject.toml
+        assert config.cluster_id is None
+        # sync settings are loaded
         assert config.sync.enabled is False
         assert config.sync.source == "./src"
         assert config.sync.exclude == ["*.log", "data/"]
         assert config.sync.max_size_mb == 100.0
         assert config.sync.max_file_size_mb == 10.0
         assert config.sync.use_gitignore is True
-
-    def test_env_overrides_pyproject(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test that environment variable takes priority over pyproject.toml."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text("""
-[tool.jupyter-databricks-kernel]
-cluster_id = "toml-cluster-456"
-""")
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("DATABRICKS_CLUSTER_ID", "env-cluster-123")
-
-        config = Config.load()
-        # Environment variable should take priority
-        assert config.cluster_id == "env-cluster-123"
 
     def test_load_missing_pyproject(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -119,20 +101,25 @@ name = "my-project"
         assert config.cluster_id is None
         assert config.sync.enabled is True  # Default value
 
-    def test_load_with_custom_path(
+    def test_load_sync_with_custom_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test loading from a custom config path."""
+        """Test loading sync settings from a custom config path."""
         custom_config = tmp_path / "custom" / "config.toml"
         custom_config.parent.mkdir(parents=True)
         custom_config.write_text("""
-[tool.jupyter-databricks-kernel]
-cluster_id = "custom-cluster-789"
+[tool.jupyter-databricks-kernel.sync]
+enabled = false
+source = "./custom"
 """)
         monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
 
         config = Config.load(config_path=custom_config)
-        assert config.cluster_id == "custom-cluster-789"
+        # cluster_id is not loaded from pyproject.toml
+        assert config.cluster_id is None
+        # sync settings are loaded from custom path
+        assert config.sync.enabled is False
+        assert config.sync.source == "./custom"
 
     def test_load_invalid_toml(
         self,
@@ -165,7 +152,7 @@ class TestConfigValidate:
         config = Config()
         errors = config.validate()
         assert len(errors) == 1
-        assert "DATABRICKS_CLUSTER_ID" in errors[0]
+        assert "Cluster ID is not configured" in errors[0]
 
     def test_validate_cluster_id_set(self) -> None:
         """Test validation passes when cluster_id is set."""
@@ -206,7 +193,7 @@ class TestConfigValidate:
         config.sync.max_file_size_mb = 0
         errors = config.validate()
         assert len(errors) == 3
-        assert any("DATABRICKS_CLUSTER_ID" in e for e in errors)
+        assert any("Cluster ID is not configured" in e for e in errors)
         assert any("max_size_mb" in e for e in errors)
         assert any("max_file_size_mb" in e for e in errors)
 
@@ -217,3 +204,136 @@ class TestConfigValidate:
         config.sync.max_file_size_mb = 10.0
         errors = config.validate()
         assert len(errors) == 0
+
+
+class TestConfigLoadFromDatabrickscfg:
+    """Tests for loading cluster_id from ~/.databrickscfg."""
+
+    def test_load_from_databrickscfg_default_profile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test loading cluster_id from DEFAULT profile."""
+        databrickscfg = tmp_path / ".databrickscfg"
+        databrickscfg.write_text("""
+[DEFAULT]
+host = https://test-workspace.cloud.databricks.com
+token = dapi123
+cluster_id = cfg-cluster-123
+""")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
+
+        config = Config.load()
+        assert config.cluster_id == "cfg-cluster-123"
+
+    def test_load_from_databrickscfg_custom_profile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test loading cluster_id from custom profile."""
+        databrickscfg = tmp_path / ".databrickscfg"
+        databrickscfg.write_text("""
+[DEFAULT]
+host = https://default-workspace.cloud.databricks.com
+cluster_id = default-cluster
+
+[DEVELOPMENT]
+host = https://dev-workspace.cloud.databricks.com
+cluster_id = dev-cluster-456
+""")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.setenv("DATABRICKS_CONFIG_PROFILE", "DEVELOPMENT")
+
+        config = Config.load()
+        assert config.cluster_id == "dev-cluster-456"
+
+    def test_env_overrides_databrickscfg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that env var takes priority over databrickscfg."""
+        databrickscfg = tmp_path / ".databrickscfg"
+        databrickscfg.write_text("""
+[DEFAULT]
+cluster_id = cfg-cluster-123
+""")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DATABRICKS_CLUSTER_ID", "env-cluster-override")
+
+        config = Config.load()
+        # Environment variable should take priority
+        assert config.cluster_id == "env-cluster-override"
+
+    def test_databrickscfg_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test when ~/.databrickscfg doesn't exist."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load()
+        assert config.cluster_id is None
+
+    def test_databrickscfg_profile_not_found(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test when specified profile doesn't exist."""
+        databrickscfg = tmp_path / ".databrickscfg"
+        databrickscfg.write_text("""
+[DEFAULT]
+cluster_id = default-cluster
+""")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.setenv("DATABRICKS_CONFIG_PROFILE", "NONEXISTENT")
+
+        config = Config.load()
+        # Profile not found, so cluster_id is None
+        assert config.cluster_id is None
+
+    def test_databrickscfg_no_cluster_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test when profile exists but has no cluster_id."""
+        databrickscfg = tmp_path / ".databrickscfg"
+        databrickscfg.write_text("""
+[DEFAULT]
+host = https://test-workspace.cloud.databricks.com
+token = dapi123
+""")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
+
+        config = Config.load()
+        # No cluster_id in profile
+        assert config.cluster_id is None
+
+    def test_databrickscfg_invalid_format(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Test when databrickscfg has invalid format."""
+        databrickscfg = tmp_path / ".databrickscfg"
+        # Write invalid INI content (missing section header)
+        databrickscfg.write_text("cluster_id = invalid")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load()
+        # Should use default (None) since parsing failed
+        assert config.cluster_id is None
+
+        # Should print warning to stderr
+        captured = capsys.readouterr()
+        assert "Warning: Failed to parse" in captured.err
+        assert "Skipping databrickscfg configuration" in captured.err

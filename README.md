@@ -43,16 +43,24 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 2. Configure authentication and cluster:
 
    ```bash
-   # Required: cluster ID (or set in pyproject.toml)
+   # Recommended: Use Databricks CLI to set up everything
+   databricks auth login --configure-cluster
+   ```
+
+   This creates `~/.databrickscfg` with authentication credentials and
+   cluster ID.
+
+   Alternatively, use environment variables:
+
+   ```bash
+   # Override cluster ID (optional, takes priority over ~/.databrickscfg)
    export DATABRICKS_CLUSTER_ID=your-cluster-id
 
-   # Authentication: choose one of the following
-   # Option A: Environment variables
+   # Authentication (if not using ~/.databrickscfg)
    export DATABRICKS_HOST=https://your-workspace.cloud.databricks.com
    export DATABRICKS_TOKEN=your-personal-access-token
 
-   # Option B: Use ~/.databrickscfg (DEFAULT profile)
-   # Option C: Use specific profile from ~/.databrickscfg
+   # Use specific profile from ~/.databrickscfg (optional)
    export DATABRICKS_CONFIG_PROFILE=your-profile-name
    ```
 
@@ -85,12 +93,30 @@ the cluster starts.
 
 ## 4. Configuration
 
-You can configure the kernel in `pyproject.toml`:
+### 4.1. Cluster ID
+
+Cluster ID is read from (in order of priority):
+
+1. `DATABRICKS_CLUSTER_ID` environment variable
+2. `~/.databrickscfg` (from active profile)
+
+Active profile is determined by `DATABRICKS_CONFIG_PROFILE` environment
+variable, or `DEFAULT` if not set.
+
+Example `~/.databrickscfg`:
+
+```ini
+[DEFAULT]
+host = https://your-workspace.cloud.databricks.com
+token = dapi...
+cluster_id = 0123-456789-abcdef12
+```
+
+### 4.2. Sync Settings
+
+You can configure file synchronization in `pyproject.toml`:
 
 ```toml
-[tool.jupyter-databricks-kernel]
-cluster_id = "0123-456789-abcdef12"
-
 [tool.jupyter-databricks-kernel.sync]
 enabled = true
 source = "."
@@ -102,7 +128,6 @@ use_gitignore = true
 
 | Option                  | Description                        | Default  |
 | ------                  | -----------                        | -------  |
-| `cluster_id`            | Target cluster ID                  | Required |
 | `sync.enabled`          | Enable file synchronization        | `true`   |
 | `sync.source`           | Source directory to sync           | `"."`    |
 | `sync.exclude`          | Additional exclude patterns        | `[]`     |
