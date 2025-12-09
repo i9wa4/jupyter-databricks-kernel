@@ -212,6 +212,173 @@ class TestExecutionResult:
         assert result.reconnected is True
 
 
+class TestImageProcessing:
+    """Tests for image processing methods."""
+
+    def test_process_image_data_url(self, executor: DatabricksExecutor) -> None:
+        """Test that Data URLs are returned unchanged."""
+        data_url = "data:image/png;base64,iVBORw0KGgo="
+        result = executor._process_image(data_url)
+        assert result == data_url
+
+    def test_process_image_filestore_path(self, executor: DatabricksExecutor) -> None:
+        """Test that FileStore paths trigger download."""
+        from io import BytesIO
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.contents = BytesIO(b"\x89PNG\r\n\x1a\n")
+        mock_client.files.download.return_value = mock_response
+        executor.client = mock_client
+
+        result = executor._process_image("/plots/test.png")
+
+        assert result is not None
+        assert result.startswith("data:image/png;base64,")
+        mock_client.files.download.assert_called_once_with("/FileStore/plots/test.png")
+
+    def test_process_image_download_failure(self, executor: DatabricksExecutor) -> None:
+        """Test that download failure returns None."""
+        mock_client = MagicMock()
+        mock_client.files.download.side_effect = Exception("Download failed")
+        executor.client = mock_client
+
+        result = executor._process_image("/plots/test.png")
+
+        assert result is None
+
+    def test_get_mime_type_png(self, executor: DatabricksExecutor) -> None:
+        """Test MIME type detection for PNG."""
+        assert executor._get_mime_type("/path/to/image.png") == "image/png"
+
+    def test_get_mime_type_jpeg(self, executor: DatabricksExecutor) -> None:
+        """Test MIME type detection for JPEG."""
+        assert executor._get_mime_type("/path/to/image.jpg") == "image/jpeg"
+        assert executor._get_mime_type("/path/to/image.jpeg") == "image/jpeg"
+
+    def test_get_mime_type_gif(self, executor: DatabricksExecutor) -> None:
+        """Test MIME type detection for GIF."""
+        assert executor._get_mime_type("/path/to/image.gif") == "image/gif"
+
+    def test_get_mime_type_svg(self, executor: DatabricksExecutor) -> None:
+        """Test MIME type detection for SVG."""
+        assert executor._get_mime_type("/path/to/image.svg") == "image/svg+xml"
+
+    def test_get_mime_type_unknown(self, executor: DatabricksExecutor) -> None:
+        """Test MIME type defaults to PNG for unknown extensions."""
+        assert executor._get_mime_type("/path/to/file") == "image/png"
+        assert executor._get_mime_type("/path/to/file.xyz") == "image/png"
+
+
+class TestExecutionResultTypes:
+    """Tests for different result types in _execute_internal."""
+
+    def test_image_result_type(self, executor: DatabricksExecutor) -> None:
+        """Test IMAGE result type processing."""
+        from databricks.sdk.service.compute import ResultType
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_results = MagicMock()
+        mock_results.cause = None
+        mock_results.result_type = ResultType.IMAGE
+        mock_results.file_name = "data:image/png;base64,iVBORw0KGgo="
+        mock_results.data = None
+        mock_response.status = "Finished"
+        mock_response.results = mock_results
+        mock_client.command_execution.execute.return_value.result.return_value = (
+            mock_response
+        )
+        executor.client = mock_client
+        executor.context_id = "test-context"
+
+        result = executor._execute_internal("display(plt)")
+
+        assert result.status == "ok"
+        assert result.images is not None
+        assert len(result.images) == 1
+        assert result.images[0] == "data:image/png;base64,iVBORw0KGgo="
+
+    def test_images_result_type(self, executor: DatabricksExecutor) -> None:
+        """Test IMAGES result type processing."""
+        from databricks.sdk.service.compute import ResultType
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_results = MagicMock()
+        mock_results.cause = None
+        mock_results.result_type = ResultType.IMAGES
+        mock_results.file_names = [
+            "data:image/png;base64,img1=",
+            "data:image/png;base64,img2=",
+        ]
+        mock_results.data = None
+        mock_response.status = "Finished"
+        mock_response.results = mock_results
+        mock_client.command_execution.execute.return_value.result.return_value = (
+            mock_response
+        )
+        executor.client = mock_client
+        executor.context_id = "test-context"
+
+        result = executor._execute_internal("display(fig)")
+
+        assert result.status == "ok"
+        assert result.images is not None
+        assert len(result.images) == 2
+
+    def test_table_result_type(self, executor: DatabricksExecutor) -> None:
+        """Test TABLE result type processing."""
+        from databricks.sdk.service.compute import ResultType
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_results = MagicMock()
+        mock_results.cause = None
+        mock_results.result_type = ResultType.TABLE
+        mock_results.data = [["val1", "val2"], ["val3", "val4"]]
+        mock_results.schema = [{"name": "col1"}, {"name": "col2"}]
+        mock_response.status = "Finished"
+        mock_response.results = mock_results
+        mock_client.command_execution.execute.return_value.result.return_value = (
+            mock_response
+        )
+        executor.client = mock_client
+        executor.context_id = "test-context"
+
+        result = executor._execute_internal("df.show()")
+
+        assert result.status == "ok"
+        assert result.table_data == [["val1", "val2"], ["val3", "val4"]]
+        assert result.table_schema == [{"name": "col1"}, {"name": "col2"}]
+
+    def test_text_result_type(self, executor: DatabricksExecutor) -> None:
+        """Test TEXT result type processing."""
+        from databricks.sdk.service.compute import ResultType
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_results = MagicMock()
+        mock_results.cause = None
+        mock_results.result_type = ResultType.TEXT
+        mock_results.data = "Hello, World!"
+        mock_results.file_name = None
+        mock_results.file_names = None
+        mock_results.schema = None
+        mock_response.status = "Finished"
+        mock_response.results = mock_results
+        mock_client.command_execution.execute.return_value.result.return_value = (
+            mock_response
+        )
+        executor.client = mock_client
+        executor.context_id = "test-context"
+
+        result = executor._execute_internal("print('Hello, World!')")
+
+        assert result.status == "ok"
+        assert result.output == "Hello, World!"
+
+
 class TestEnsureClusterRunning:
     """Tests for _ensure_cluster_running method."""
 
