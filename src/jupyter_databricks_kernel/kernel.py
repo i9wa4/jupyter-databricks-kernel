@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import uuid
 from typing import Any
 
@@ -12,6 +13,8 @@ from . import __version__
 from .config import Config
 from .executor import DatabricksExecutor
 from .sync import FileSync
+
+logger = logging.getLogger(__name__)
 
 
 class DatabricksKernel(Kernel):
@@ -37,6 +40,7 @@ class DatabricksKernel(Kernel):
         self.file_sync: FileSync | None = None
         self._initialized = False
         self._last_dbfs_path: str | None = None
+        logger.info("Kernel initialized: session_id=%s", self._session_id)
 
     def _initialize(self) -> bool:
         """Initialize the Databricks connection.
@@ -47,9 +51,12 @@ class DatabricksKernel(Kernel):
         if self._initialized:
             return True
 
+        logger.debug("Initializing Databricks connection")
+
         # Validate configuration
         errors = self._kernel_config.validate()
         if errors:
+            logger.error("Configuration validation failed: %s", errors)
             for error in errors:
                 self.send_response(
                     self.iopub_socket,
@@ -64,6 +71,10 @@ class DatabricksKernel(Kernel):
         if self.file_sync is None:
             self.file_sync = FileSync(self._kernel_config, self._session_id)
         self._initialized = True
+        logger.info(
+            "Databricks connection initialized: cluster_id=%s",
+            self._kernel_config.cluster_id,
+        )
         return True
 
     def _sync_files(self) -> bool:
@@ -76,9 +87,11 @@ class DatabricksKernel(Kernel):
             return True
 
         if not self.file_sync.needs_sync():
+            logger.debug("File sync skipped: no changes detected")
             return True
 
         try:
+            logger.debug("Starting file sync")
             self.send_response(
                 self.iopub_socket,
                 "stream",
@@ -101,6 +114,7 @@ class DatabricksKernel(Kernel):
                 )
                 return False
 
+            logger.debug("File sync completed: %d files", stats.total_files)
             self.send_response(
                 self.iopub_socket,
                 "stream",
@@ -109,6 +123,7 @@ class DatabricksKernel(Kernel):
             return True
 
         except Exception as e:
+            logger.warning("File sync failed: %s", e)
             self.send_response(
                 self.iopub_socket,
                 "stream",
@@ -122,6 +137,7 @@ class DatabricksKernel(Kernel):
 
         Re-runs the setup code to restore sys.path and notifies the user.
         """
+        logger.info("Session reconnected, restoring sys.path")
         # Notify user about reconnection
         self.send_response(
             self.iopub_socket,
@@ -139,6 +155,7 @@ class DatabricksKernel(Kernel):
                 result = self.executor.execute(setup_code, allow_reconnect=False)
                 if result.status != "ok":
                     err = result.error
+                    logger.warning("Failed to restore sys.path: %s", err)
                     self.send_response(
                         self.iopub_socket,
                         "stream",
@@ -149,6 +166,7 @@ class DatabricksKernel(Kernel):
                     )
             except Exception as e:
                 # Notify user but don't fail the main execution
+                logger.warning("Failed to restore sys.path: %s", e)
                 self.send_response(
                     self.iopub_socket,
                     "stream",
@@ -192,6 +210,10 @@ class DatabricksKernel(Kernel):
                 "user_expressions": {},
             }
 
+        # Log code preview (truncate to 50 chars)
+        code_preview = code_str[:50] + "..." if len(code_str) > 50 else code_str
+        logger.debug("Executing code: %r", code_preview)
+
         # Initialize on first execution
         if not self._initialize():
             return {
@@ -212,7 +234,10 @@ class DatabricksKernel(Kernel):
 
             # Handle reconnection: re-run setup code and notify user
             if result.reconnected:
+                logger.debug("Execution triggered reconnection")
                 self._handle_reconnection()
+
+            logger.debug("Execution completed: status=%s", result.status)
 
             if result.status == "ok":
                 if not silent:
@@ -282,6 +307,7 @@ class DatabricksKernel(Kernel):
                 }
 
         except Exception as e:
+            logger.error("Execution error: %s", e)
             error_msg = str(e)
             if not silent:
                 self.send_response(
@@ -370,6 +396,7 @@ class DatabricksKernel(Kernel):
         Returns:
             Shutdown result dictionary.
         """
+        logger.info("Shutting down kernel: restart=%s", restart)
         if restart:
             # On restart, keep the execution context alive for session continuity
             # Only reset the initialized flag so we can re-initialize on next execute
@@ -381,18 +408,19 @@ class DatabricksKernel(Kernel):
         if self.file_sync:
             try:
                 self.file_sync.cleanup()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("File sync cleanup error (ignored): %s", e)
             self.file_sync = None
 
         # Destroy execution context
         if self.executor:
             try:
                 self.executor.destroy_context()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Executor cleanup error (ignored): %s", e)
             self.executor = None
 
         self._initialized = False
         self._last_dbfs_path = None
+        logger.debug("Kernel shutdown complete")
         return {"status": "ok", "restart": restart}
