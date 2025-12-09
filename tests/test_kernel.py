@@ -237,3 +237,40 @@ class TestExecuteWithReconnection:
 
         mock_handle.assert_called_once()
         assert result["status"] == "ok"
+
+
+class TestProgressNotification:
+    """Tests for progress notification during execution."""
+
+    def test_send_progress_sends_to_stderr(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that _send_progress sends message to stderr."""
+        mock_kernel._send_progress("Running...")
+
+        mock_kernel.send_response.assert_called_once_with(
+            mock_kernel.iopub_socket,
+            "stream",
+            {"name": "stderr", "text": "Running...\n"},
+        )
+
+    def test_execute_passes_on_progress_callback(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that do_execute passes on_progress callback to executor."""
+        from jupyter_databricks_kernel.executor import ExecutionResult
+
+        mock_kernel._initialized = True
+        mock_kernel.executor = MagicMock()
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel.file_sync.needs_sync.return_value = False
+
+        mock_kernel.executor.execute.return_value = ExecutionResult(
+            status="ok", output="result"
+        )
+
+        asyncio.run(mock_kernel.do_execute("print(1)", silent=False))
+
+        # Verify on_progress was passed to execute
+        mock_kernel.executor.execute.assert_called_once()
+        call_kwargs = mock_kernel.executor.execute.call_args[1]
+        assert "on_progress" in call_kwargs
+        assert call_kwargs["on_progress"] == mock_kernel._send_progress

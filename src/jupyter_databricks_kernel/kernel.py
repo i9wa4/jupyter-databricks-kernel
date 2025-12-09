@@ -157,6 +157,18 @@ class DatabricksKernel(Kernel):
                     },
                 )
 
+    def _send_progress(self, message: str) -> None:
+        """Send a progress message to stderr.
+
+        Args:
+            message: The progress message to display.
+        """
+        self.send_response(
+            self.iopub_socket,
+            "stream",
+            {"name": "stderr", "text": f"{message}\n"},
+        )
+
     async def do_execute(
         self,
         code: Any,
@@ -207,7 +219,7 @@ class DatabricksKernel(Kernel):
         # Execute on Databricks
         assert self.executor is not None
         try:
-            result = self.executor.execute(code_str)
+            result = self.executor.execute(code_str, on_progress=self._send_progress)
 
             # Handle reconnection: re-run setup code and notify user
             if result.reconnected:
