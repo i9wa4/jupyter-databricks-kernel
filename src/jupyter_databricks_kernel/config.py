@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import configparser
+import logging
 import os
-import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -51,10 +53,13 @@ class Config:
         Returns:
             Loaded configuration.
         """
+        logger.debug("Loading configuration")
         config = cls()
 
         # Load cluster_id from environment variable (highest priority)
         config.cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
+        if config.cluster_id:
+            logger.debug("Cluster ID from environment: %s", config.cluster_id)
 
         # Load cluster_id from databrickscfg if not set by env var
         if config.cluster_id is None:
@@ -68,6 +73,11 @@ class Config:
         if config_path.exists():
             config._load_from_pyproject(config_path)
 
+        logger.debug(
+            "Configuration loaded: cluster_id=%s, sync_enabled=%s",
+            config.cluster_id,
+            config.sync.enabled,
+        )
         return config
 
     def _load_cluster_id_from_databrickscfg(self) -> None:
@@ -87,11 +97,7 @@ class Config:
         try:
             parser.read(databrickscfg_path)
         except configparser.Error as e:
-            print(
-                f"Warning: Failed to parse {databrickscfg_path}: {e}. "
-                "Skipping databrickscfg configuration.",
-                file=sys.stderr,
-            )
+            logger.warning("Failed to parse %s: %s", databrickscfg_path, e)
             return
 
         if profile not in parser:
@@ -99,6 +105,9 @@ class Config:
 
         if "cluster_id" in parser[profile]:
             self.cluster_id = parser[profile]["cluster_id"]
+            logger.debug(
+                "Cluster ID from databrickscfg [%s]: %s", profile, self.cluster_id
+            )
 
     def _load_from_pyproject(self, config_path: Path) -> None:
         """Load sync configuration from pyproject.toml.
@@ -109,15 +118,12 @@ class Config:
         Args:
             config_path: Path to pyproject.toml.
         """
+        logger.debug("Loading sync config from %s", config_path)
         try:
             with open(config_path, "rb") as f:
                 data = tomllib.load(f)
         except tomllib.TOMLDecodeError as e:
-            print(
-                f"Warning: Failed to parse {config_path}: {e}. "
-                "Using default configuration.",
-                file=sys.stderr,
-            )
+            logger.warning("Failed to parse %s: %s", config_path, e)
             return
 
         # Get [tool.jupyter-databricks-kernel] section

@@ -806,8 +806,8 @@ del _extract_dir, _dbfs_zip_path, _local_zip
         try:
             client = self._ensure_client()
             client.dbfs.delete(dbfs_dir, recursive=True)
-        except Exception:
-            pass  # Ignore cleanup errors
+        except Exception as e:
+            logger.debug("DBFS cleanup error (ignored): %s", e)
 
         # Also clean up Workspace directory if user_name is known
         if self._user_name is not None:
@@ -818,5 +818,5 @@ del _extract_dir, _dbfs_zip_path, _local_zip
             try:
                 client = self._ensure_client()
                 client.workspace.delete(workspace_dir, recursive=True)
-            except Exception:
-                pass  # Ignore cleanup errors
+            except Exception as e:
+                logger.debug("Workspace cleanup error (ignored): %s", e)

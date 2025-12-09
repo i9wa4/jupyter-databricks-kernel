@@ -125,7 +125,7 @@ source = "./custom"
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Test loading when pyproject.toml has invalid TOML syntax."""
         pyproject = tmp_path / "pyproject.toml"
@@ -138,10 +138,8 @@ source = "./custom"
         assert config.cluster_id is None
         assert config.sync.enabled is True
 
-        # Should print warning to stderr
-        captured = capsys.readouterr()
-        assert "Warning: Failed to parse" in captured.err
-        assert "Using default configuration" in captured.err
+        # Should log warning
+        assert "Failed to parse" in caplog.text
 
 
 class TestConfigValidate:
@@ -319,7 +317,7 @@ token = dapi123
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Test when databrickscfg has invalid format."""
         databrickscfg = tmp_path / ".databrickscfg"
@@ -333,7 +331,5 @@ token = dapi123
         # Should use default (None) since parsing failed
         assert config.cluster_id is None
 
-        # Should print warning to stderr
-        captured = capsys.readouterr()
-        assert "Warning: Failed to parse" in captured.err
-        assert "Skipping databrickscfg configuration" in captured.err
+        # Should log warning
+        assert "Failed to parse" in caplog.text
