@@ -143,10 +143,49 @@ use_gitignore = true
 - `input()` and interactive prompts do not work
 - Interactive widgets (ipywidgets) are not supported
 
-## 6. Development
+## 6. Troubleshooting
+
+### 6.1. Kernel feels slow
+
+File sync may be uploading unnecessary files. Check your sync settings:
+
+1. Ensure `.gitignore` includes large/unnecessary files:
+
+   ```text
+   .venv/
+   __pycache__/
+   *.pyc
+   data/
+   *.parquet
+   node_modules/
+   ```
+
+2. Add exclude patterns in `pyproject.toml`:
+
+   ```toml
+   [tool.jupyter-databricks-kernel.sync]
+   exclude = ["data/", "models/", "*.csv"]
+   ```
+
+3. Set size limits to catch unexpected large files:
+
+   ```toml
+   [tool.jupyter-databricks-kernel.sync]
+   max_size_mb = 50.0
+   max_file_size_mb = 10.0
+   ```
+
+4. Disable sync entirely if not needed:
+
+   ```toml
+   [tool.jupyter-databricks-kernel.sync]
+   enabled = false
+   ```
+
+## 7. Development
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and guidelines.
 
-## 7. License
+## 8. License
 
 Apache License 2.0
