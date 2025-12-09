@@ -210,10 +210,6 @@ class DatabricksKernel(Kernel):
                 "user_expressions": {},
             }
 
-        # Log code preview (truncate to 50 chars)
-        code_preview = code_str[:50] + "..." if len(code_str) > 50 else code_str
-        logger.debug("Executing code: %r", code_preview)
-
         # Initialize on first execution
         if not self._initialize():
             return {
