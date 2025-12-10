@@ -788,6 +788,7 @@ class TestNeedsSyncIntegration:
         """Test that needs_sync returns True when files are deleted."""
         mock_config.sync.source = str(tmp_path)
         mock_config.sync.exclude = []
+        mock_config.base_path = tmp_path
         file_sync = FileSync(mock_config, "test-session")
 
         # Create file and update cache
@@ -808,6 +809,7 @@ class TestNeedsSyncIntegration:
         """Test that needs_sync returns False when no files changed or deleted."""
         mock_config.sync.source = str(tmp_path)
         mock_config.sync.exclude = []
+        mock_config.base_path = tmp_path
         file_sync = FileSync(mock_config, "test-session")
 
         # Create file and update cache
@@ -825,6 +827,7 @@ class TestNeedsSyncIntegration:
         """Test that needs_sync returns True when files are modified."""
         mock_config.sync.source = str(tmp_path)
         mock_config.sync.exclude = []
+        mock_config.base_path = tmp_path
         file_sync = FileSync(mock_config, "test-session")
 
         # Create file and update cache
@@ -854,6 +857,7 @@ class TestSkipNonRegularFiles:
         try:
             mock_config.sync.source = str(test_dir)
             mock_config.sync.exclude = []
+            mock_config.base_path = test_dir
             file_sync = FileSync(mock_config, "test-session")
 
             # Create a regular file
@@ -889,6 +893,7 @@ class TestSkipNonRegularFiles:
         try:
             mock_config.sync.source = str(test_dir)
             mock_config.sync.exclude = []
+            mock_config.base_path = test_dir
             file_sync = FileSync(mock_config, "test-session")
 
             # Create a regular file
@@ -913,3 +918,115 @@ class TestSkipNonRegularFiles:
                 sock.close()
         finally:
             shutil.rmtree(test_dir, ignore_errors=True)
+
+
+class TestGetSourcePathWithBasePath:
+    """Tests for _get_source_path with base_path."""
+
+    def test_uses_base_path_when_set(self, tmp_path: Path) -> None:
+        """Test that source path uses base_path when available."""
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = "."
+        config.sync.exclude = []
+        config.base_path = tmp_path
+
+        file_sync = FileSync(config, "test-session")
+        source_path = file_sync._get_source_path()
+
+        assert source_path == tmp_path
+
+    def test_uses_base_path_with_relative_source(self, tmp_path: Path) -> None:
+        """Test that source path combines base_path with relative source."""
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = "./src"
+        config.sync.exclude = []
+        config.base_path = tmp_path
+
+        file_sync = FileSync(config, "test-session")
+        source_path = file_sync._get_source_path()
+
+        assert source_path == tmp_path / "src"
+
+    def test_falls_back_to_cwd_when_no_base_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that source path uses cwd when base_path is None."""
+        monkeypatch.chdir(tmp_path)
+
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = "."
+        config.sync.exclude = []
+        config.base_path = None
+
+        file_sync = FileSync(config, "test-session")
+        source_path = file_sync._get_source_path()
+
+        assert source_path == tmp_path
+
+    def test_hierarchical_project_structure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test the actual use case: notebook in subdirectory.
+
+        Simulates the scenario where:
+        - Project root has pyproject.toml
+        - User runs notebook from notebooks/ subdirectory
+        - sync.source = "." should sync from project root, not notebooks/
+        """
+        # Create project structure
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        notebooks_dir = project_root / "notebooks"
+        notebooks_dir.mkdir()
+
+        src_dir = project_root / "src"
+        src_dir.mkdir()
+        (src_dir / "main.py").write_text("print('hello')")
+
+        # Simulate being in notebooks/ directory
+        monkeypatch.chdir(notebooks_dir)
+
+        # Config with base_path pointing to project root (where pyproject.toml is)
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = "."
+        config.sync.exclude = []
+        config.base_path = project_root  # Simulates pyproject.toml found in parent
+
+        file_sync = FileSync(config, "test-session")
+        source_path = file_sync._get_source_path()
+
+        # Should resolve to project root, not notebooks/
+        assert source_path == project_root
+
+    def test_hierarchical_with_src_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test hierarchical structure with source = './src'."""
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        notebooks_dir = project_root / "notebooks"
+        notebooks_dir.mkdir()
+
+        src_dir = project_root / "src"
+        src_dir.mkdir()
+
+        # Simulate being in notebooks/ directory
+        monkeypatch.chdir(notebooks_dir)
+
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = "./src"
+        config.sync.exclude = []
+        config.base_path = project_root
+
+        file_sync = FileSync(config, "test-session")
+        source_path = file_sync._get_source_path()
+
+        # Should resolve to project_root/src
+        assert source_path == src_dir

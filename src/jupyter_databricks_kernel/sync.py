@@ -427,13 +427,19 @@ class FileSync:
     def _get_source_path(self) -> Path:
         """Get the source directory path.
 
+        If pyproject.toml was found, resolves source relative to its location.
+        Otherwise, falls back to cwd for backward compatibility.
+
         Returns:
             Path to the source directory.
         """
         source = self.config.sync.source
         if source.startswith("./"):
             source = source[2:]
-        return Path.cwd() / source
+
+        # Use base_path (pyproject.toml location) if available, otherwise cwd
+        base = self.config.base_path if self.config.base_path else Path.cwd()
+        return base / source
 
     def _load_gitignore_spec(self, source_path: Path) -> pathspec.PathSpec:
         """Load and cache the combined PathSpec from default and configured patterns.

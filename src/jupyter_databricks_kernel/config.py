@@ -35,6 +35,26 @@ class Config:
 
     cluster_id: str | None = None
     sync: SyncConfig = field(default_factory=SyncConfig)
+    base_path: Path | None = None
+
+    @staticmethod
+    def _find_pyproject_toml() -> Path | None:
+        """Find pyproject.toml in current or parent directories.
+
+        Searches from cwd upward, similar to how ruff, pytest, and git
+        find their config files.
+
+        Returns:
+            Path to pyproject.toml if found, None otherwise.
+        """
+        current = Path.cwd()
+        for directory in [current] + list(current.parents):
+            candidate = directory / "pyproject.toml"
+            if candidate.exists():
+                logger.debug("Found pyproject.toml at %s", candidate)
+                return candidate
+        logger.debug("No pyproject.toml found in %s or parent directories", current)
+        return None
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> Config:
@@ -48,7 +68,7 @@ class Config:
 
         Args:
             config_path: Optional path to the pyproject.toml file for sync settings.
-                         Defaults to pyproject.toml in current directory.
+                         If not provided, searches current and parent directories.
 
         Returns:
             Loaded configuration.
@@ -65,18 +85,20 @@ class Config:
         if config.cluster_id is None:
             config._load_cluster_id_from_databrickscfg()
 
-        # Determine config file path for sync settings
+        # Search for pyproject.toml if not explicitly provided
         if config_path is None:
-            config_path = Path.cwd() / "pyproject.toml"
+            config_path = cls._find_pyproject_toml()
 
-        # Load sync settings from config file if it exists
-        if config_path.exists():
+        # Load sync settings and set base_path if config file exists
+        if config_path is not None and config_path.exists():
+            config.base_path = config_path.parent
             config._load_from_pyproject(config_path)
 
         logger.debug(
-            "Configuration loaded: cluster_id=%s, sync_enabled=%s",
+            "Configuration loaded: cluster_id=%s, sync_enabled=%s, base_path=%s",
             config.cluster_id,
             config.sync.enabled,
+            config.base_path,
         )
         return config
 
