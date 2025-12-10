@@ -1,7 +1,7 @@
 """Integration tests for jupyter-databricks-kernel.
 
 These tests require a real Databricks cluster and valid credentials.
-They are skipped in CI environments where DATABRICKS_CLUSTER_ID is not set.
+They are skipped in CI environments where cluster_id is not configured.
 
 Run with: pytest -m integration
 Skip with: pytest -m "not integration"
@@ -13,9 +13,23 @@ import os
 
 import pytest
 
+from jupyter_databricks_kernel.config import Config
+
+
+def _has_cluster_id() -> bool:
+    """Check if cluster_id is available from env or ~/.databrickscfg."""
+    if os.environ.get("DATABRICKS_CLUSTER_ID"):
+        return True
+    try:
+        config = Config.load()
+        return bool(config.cluster_id)
+    except Exception:
+        return False
+
+
 # Skip all tests in this module if no cluster is configured
-SKIP_INTEGRATION = not os.environ.get("DATABRICKS_CLUSTER_ID")
-SKIP_REASON = "DATABRICKS_CLUSTER_ID environment variable not set"
+SKIP_INTEGRATION = not _has_cluster_id()
+SKIP_REASON = "cluster_id not configured (env or ~/.databrickscfg)"
 
 
 @pytest.mark.integration
