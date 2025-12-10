@@ -920,6 +920,26 @@ class TestSkipNonRegularFiles:
             shutil.rmtree(test_dir, ignore_errors=True)
 
 
+class TestGetSetupCode:
+    """Tests for get_setup_code method."""
+
+    def test_setup_code_includes_chdir(self, mock_config: MagicMock) -> None:
+        """Test that setup code sets working directory."""
+        file_sync = FileSync(mock_config, "test-session")
+        # Mock _get_user_name to avoid Databricks SDK authentication
+        file_sync._get_user_name = MagicMock(return_value="test@example.com")
+        setup_code = file_sync.get_setup_code("/tmp/test.zip")
+        assert "os.chdir(_extract_dir)" in setup_code
+
+    def test_setup_code_includes_sys_path(self, mock_config: MagicMock) -> None:
+        """Test that setup code adds to sys.path."""
+        file_sync = FileSync(mock_config, "test-session")
+        # Mock _get_user_name to avoid Databricks SDK authentication
+        file_sync._get_user_name = MagicMock(return_value="test@example.com")
+        setup_code = file_sync.get_setup_code("/tmp/test.zip")
+        assert "sys.path.insert(0, _extract_dir)" in setup_code
+
+
 class TestGetSourcePathWithBasePath:
     """Tests for _get_source_path with base_path."""
 

@@ -798,6 +798,9 @@ os.remove(_local_zip)
 if _extract_dir not in sys.path:
     sys.path.insert(0, _extract_dir)
 
+# Set working directory for relative path compatibility (Git Folders/Jobs)
+os.chdir(_extract_dir)
+
 # Clean up variables
 del _extract_dir, _dbfs_zip_path, _local_zip
 """
