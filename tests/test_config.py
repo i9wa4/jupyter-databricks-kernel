@@ -60,6 +60,7 @@ max_size_mb = 100.0
 max_file_size_mb = 10.0
 use_gitignore = true
 """)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
 
@@ -78,6 +79,7 @@ use_gitignore = true
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Test loading when pyproject.toml doesn't exist."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
 
@@ -94,6 +96,7 @@ use_gitignore = true
 [project]
 name = "my-project"
 """)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
 
@@ -112,6 +115,7 @@ name = "my-project"
 enabled = false
 source = "./custom"
 """)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
 
         config = Config.load(config_path=custom_config)
@@ -130,6 +134,7 @@ source = "./custom"
         """Test loading when pyproject.toml has invalid TOML syntax."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("invalid toml [ syntax")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
 
@@ -333,3 +338,139 @@ token = dapi123
 
         # Should log warning
         assert "Failed to parse" in caplog.text
+
+
+class TestFindPyprojectToml:
+    """Tests for _find_pyproject_toml method."""
+
+    def test_finds_in_current_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test finding pyproject.toml in current directory."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname = 'test'\n")
+        monkeypatch.chdir(tmp_path)
+
+        result = Config._find_pyproject_toml()
+        assert result == pyproject
+
+    def test_finds_in_parent_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test finding pyproject.toml in parent directory."""
+        # Create pyproject.toml in parent
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname = 'test'\n")
+
+        # Create and change to subdirectory
+        subdir = tmp_path / "notebooks"
+        subdir.mkdir()
+        monkeypatch.chdir(subdir)
+
+        result = Config._find_pyproject_toml()
+        assert result == pyproject
+
+    def test_finds_in_grandparent_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test finding pyproject.toml in grandparent directory."""
+        # Create pyproject.toml in root
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname = 'test'\n")
+
+        # Create nested subdirectory structure
+        subdir = tmp_path / "notebooks" / "analysis"
+        subdir.mkdir(parents=True)
+        monkeypatch.chdir(subdir)
+
+        result = Config._find_pyproject_toml()
+        assert result == pyproject
+
+    def test_returns_none_when_not_found(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test returns None when pyproject.toml doesn't exist."""
+        subdir = tmp_path / "empty_project"
+        subdir.mkdir()
+        monkeypatch.chdir(subdir)
+
+        result = Config._find_pyproject_toml()
+        assert result is None
+
+    def test_finds_nearest_pyproject_toml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that nearest pyproject.toml is returned when multiple exist."""
+        # Create pyproject.toml in root
+        root_pyproject = tmp_path / "pyproject.toml"
+        root_pyproject.write_text("[project]\nname = 'root'\n")
+
+        # Create pyproject.toml in subdirectory
+        subdir = tmp_path / "subproject"
+        subdir.mkdir()
+        sub_pyproject = subdir / "pyproject.toml"
+        sub_pyproject.write_text("[project]\nname = 'subproject'\n")
+
+        # Change to subproject directory
+        monkeypatch.chdir(subdir)
+
+        result = Config._find_pyproject_toml()
+        # Should find the nearest one (subproject)
+        assert result == sub_pyproject
+
+
+class TestConfigBasePath:
+    """Tests for Config.base_path field."""
+
+    def test_base_path_set_when_pyproject_found(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that base_path is set when pyproject.toml is found."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname = 'test'\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load()
+        assert config.base_path == tmp_path
+
+    def test_base_path_set_from_parent_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that base_path is set to parent when pyproject.toml is there."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname = 'test'\n")
+
+        subdir = tmp_path / "notebooks"
+        subdir.mkdir()
+        monkeypatch.chdir(subdir)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load()
+        # base_path should be the directory containing pyproject.toml
+        assert config.base_path == tmp_path
+
+    def test_base_path_none_when_pyproject_not_found(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that base_path is None when pyproject.toml is not found."""
+        subdir = tmp_path / "empty_project"
+        subdir.mkdir()
+        monkeypatch.chdir(subdir)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load()
+        assert config.base_path is None
+
+    def test_base_path_with_explicit_config_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that base_path is set when config_path is explicitly provided."""
+        custom_dir = tmp_path / "custom"
+        custom_dir.mkdir()
+        custom_config = custom_dir / "pyproject.toml"
+        custom_config.write_text("[project]\nname = 'custom'\n")
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load(config_path=custom_config)
+        assert config.base_path == custom_dir
