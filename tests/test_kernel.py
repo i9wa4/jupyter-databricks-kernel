@@ -319,6 +319,143 @@ class TestGenerateHtmlTable:
         assert "<script>" not in html
 
 
+class TestProgressDisplay:
+    """Tests for progress display functionality."""
+
+    def test_send_progress_marks_active(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that _send_progress marks progress as active."""
+        assert mock_kernel._progress_display_id is None
+
+        mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
+
+        assert mock_kernel._progress_display_id == "active"
+
+    def test_send_progress_sends_clear_and_stream(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that _send_progress sends clear_output and stream messages."""
+        mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
+
+        # Should send clear_output then stream
+        calls = mock_kernel.send_response.call_args_list
+        assert len(calls) == 2
+        assert calls[0][0][1] == "clear_output"
+        assert calls[1][0][1] == "stream"
+
+    def test_send_progress_contains_spinner(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that progress message contains spinner character."""
+        from jupyter_databricks_kernel.kernel import SPINNER_CHARS
+
+        mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
+
+        # Get the stream call (second call after clear_output)
+        call_args = mock_kernel.send_response.call_args_list[1][0]
+        content = call_args[2]
+        text = content["text"]
+        assert any(char in text for char in SPINNER_CHARS)
+
+    def test_send_progress_contains_status(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that progress message contains cluster and command status."""
+        mock_kernel._send_progress("RUNNING", "QUEUED", 5.0)
+
+        # Get the stream call (second call after clear_output)
+        call_args = mock_kernel.send_response.call_args_list[1][0]
+        content = call_args[2]
+        text = content["text"]
+        assert "RUNNING" in text
+        assert "QUEUED" in text
+        assert "5s" in text
+
+    def test_send_completion_clears_and_shows_message(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that _send_completion clears progress and shows completion."""
+        # First create a progress display
+        mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
+        mock_kernel.send_response.reset_mock()
+
+        mock_kernel._send_completion(5.5)
+
+        # Should send clear_output then stream
+        calls = mock_kernel.send_response.call_args_list
+        assert len(calls) == 2
+        assert calls[0][0][1] == "clear_output"
+        assert calls[1][0][1] == "stream"
+        text = calls[1][0][2]["text"]
+        assert "Completed" in text
+        assert "5.5s" in text
+
+    def test_send_completion_resets_state(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that _send_completion resets progress state."""
+        mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
+        mock_kernel._send_completion(5.0)
+
+        assert mock_kernel._progress_display_id is None
+        assert mock_kernel._spinner_index == 0
+
+    def test_send_completion_without_display_id(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that _send_completion handles missing display_id gracefully."""
+        mock_kernel._progress_display_id = None
+
+        # Should not raise
+        mock_kernel._send_completion(5.0)
+
+        # State should still be reset
+        assert mock_kernel._progress_display_id is None
+        assert mock_kernel._spinner_index == 0
+
+    def test_execute_sends_progress(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that execute sends progress during execution."""
+        mock_kernel._initialized = True
+        mock_kernel.executor = MagicMock()
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel.file_sync.needs_sync.return_value = False
+
+        from jupyter_databricks_kernel.executor import ExecutionResult
+
+        # Capture the on_progress callback
+        captured_callback = None
+
+        def capture_execute(code, on_progress=None):
+            nonlocal captured_callback
+            captured_callback = on_progress
+            return ExecutionResult(status="ok", output="result")
+
+        mock_kernel.executor.execute.side_effect = capture_execute
+
+        asyncio.run(mock_kernel.do_execute("print(1)", silent=False))
+
+        # Verify callback was passed
+        assert captured_callback is not None
+
+    def test_execute_silent_no_progress(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that silent execution does not send progress."""
+        mock_kernel._initialized = True
+        mock_kernel.executor = MagicMock()
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel.file_sync.needs_sync.return_value = False
+
+        from jupyter_databricks_kernel.executor import ExecutionResult
+
+        captured_callback = None
+
+        def capture_execute(code, on_progress=None):
+            nonlocal captured_callback
+            captured_callback = on_progress
+            return ExecutionResult(status="ok")
+
+        mock_kernel.executor.execute.side_effect = capture_execute
+
+        asyncio.run(mock_kernel.do_execute("print(1)", silent=True))
+
+        # Verify no callback was passed
+        assert captured_callback is None
+
+
 class TestDisplayResults:
     """Tests for displaying different result types."""
 

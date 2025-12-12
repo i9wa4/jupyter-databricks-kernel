@@ -17,6 +17,7 @@ import stat
 import tempfile
 import time
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,6 +29,10 @@ if TYPE_CHECKING:
     from .config import Config
 
 logger = logging.getLogger(__name__)
+
+# Sync progress callback type
+# Args: message string (e.g., "Collecting files... 10/50")
+SyncProgressCallback = Callable[[str], None]
 
 CACHE_FILE_NAME = ".jupyter-databricks-kernel-cache.json"
 CACHE_VERSION = 1
@@ -232,7 +237,10 @@ class FileCache:
             ).hexdigest()
 
     def get_changed_files(
-        self, files: list[Path], file_sizes: dict[Path, int] | None = None
+        self,
+        files: list[Path],
+        file_sizes: dict[Path, int] | None = None,
+        on_progress: Callable[[str], None] | None = None,
     ) -> tuple[list[Path], SyncStats, dict[str, str]]:
         """Get list of changed files and sync statistics.
 
@@ -240,6 +248,7 @@ class FileCache:
             files: List of file paths to check.
             file_sizes: Optional dict of pre-computed file sizes (path -> size).
                 If provided, sizes are reused instead of calling stat() again.
+            on_progress: Optional callback for progress updates.
 
         Returns:
             Tuple of (changed files list, sync statistics, computed hashes).
@@ -249,8 +258,12 @@ class FileCache:
         changed: list[Path] = []
         stats = SyncStats(total_files=len(files))
         computed_hashes: dict[str, str] = {}
+        total = len(files)
 
-        for file_path in files:
+        for i, file_path in enumerate(files):
+            if on_progress:
+                on_progress(f"Hashing files... {i + 1}/{total}")
+
             try:
                 rel_path = str(file_path.relative_to(self.source_path))
                 current_hash = self.compute_hash(file_path)
@@ -527,8 +540,14 @@ class FileSync:
             self._file_cache = FileCache(self._get_source_path())
         return self._file_cache
 
-    def _get_all_files(self) -> list[Path]:
+    def _get_all_files(
+        self,
+        on_progress: SyncProgressCallback | None = None,
+    ) -> list[Path]:
         """Get all non-excluded files in the source directory.
+
+        Args:
+            on_progress: Optional callback for progress updates.
 
         Returns:
             List of file paths.
@@ -552,6 +571,8 @@ class FileSync:
                     file_path, source_path
                 ):
                     files.append(file_path)
+                    if on_progress:
+                        on_progress(f"Collecting files... {len(files)}")
 
         return files
 
@@ -692,8 +713,14 @@ class FileSync:
             mb = size_bytes / (1024 * 1024)
             return f"{mb:.0f} MB" if mb.is_integer() else f"{mb:.1f} MB"
 
-    def sync(self) -> SyncStats:
+    def sync(
+        self,
+        on_progress: SyncProgressCallback | None = None,
+    ) -> SyncStats:
         """Synchronize files to DBFS.
+
+        Args:
+            on_progress: Optional callback for progress updates.
 
         Returns:
             Sync statistics including changed files, sizes, and duration.
@@ -708,17 +735,25 @@ class FileSync:
 
         # Get all files and validate sizes (also returns size info for reuse)
         source_path = self._get_source_path()
-        all_files = self._get_all_files()
+
+        all_files = self._get_all_files(on_progress=on_progress)
         file_sizes = self._validate_sizes(all_files, source_path)
+        total_files = len(all_files)
 
         # Get changed files and statistics (reuse size info to avoid duplicate stat())
         file_cache = self._get_file_cache()
         changed_files, stats, computed_hashes = file_cache.get_changed_files(
-            all_files, file_sizes
+            all_files, file_sizes, on_progress=on_progress
         )
+
+        if on_progress:
+            on_progress(f"Creating archive ({total_files} files)...")
 
         # Create zip archive (reuse file list to avoid duplicate os.walk)
         zip_data = self._create_zip(all_files)
+
+        if on_progress:
+            on_progress(f"Uploading ({self._format_size(len(zip_data))})...")
 
         # Upload to DBFS using SDK's high-level API
         client = self._ensure_client()
@@ -761,49 +796,74 @@ class FileSync:
         Returns:
             Python code to execute on the remote cluster.
         """
+        steps = self.get_setup_steps(dbfs_path)
+        return "\n".join(code for _, code in steps)
+
+    def get_setup_steps(self, dbfs_path: str) -> list[tuple[str, str]]:
+        """Generate setup steps to run on the remote cluster.
+
+        Each step is a tuple of (description, code) that can be executed
+        individually for progress tracking.
+
+        Args:
+            dbfs_path: The DBFS path where the zip was uploaded.
+
+        Returns:
+            List of (description, code) tuples.
+        """
         # Use /Workspace/Users/{email}/ which is allowed on Shared clusters
         user_name = self._get_user_name()
         workspace_extract_dir = (
             f"/Workspace/Users/{user_name}/jupyter_databricks_kernel/{self.session_id}"
         )
 
-        return f"""
+        return [
+            (
+                "Preparing directory",
+                f'''
 import sys
 import zipfile
 import os
 import shutil
 
-# Extract to /Workspace/Users/ (allowed on Shared clusters with Unity Catalog)
 _extract_dir = "{workspace_extract_dir}"
 _dbfs_zip_path = "dbfs:{dbfs_path}"
 
-# Remove old extracted directory if exists
 if os.path.exists(_extract_dir):
     shutil.rmtree(_extract_dir)
-
-# Create extract directory
 os.makedirs(_extract_dir, exist_ok=True)
-
-# Copy from DBFS to Workspace and extract
+''',
+            ),
+            (
+                "Copying from DBFS",
+                f'''
+_extract_dir = "{workspace_extract_dir}"
+_dbfs_zip_path = "dbfs:{dbfs_path}"
 _local_zip = _extract_dir + "/project.zip"
 dbutils.fs.cp(_dbfs_zip_path, "file:" + _local_zip)
-
+''',
+            ),
+            (
+                "Extracting files",
+                f'''
+_extract_dir = "{workspace_extract_dir}"
+_local_zip = _extract_dir + "/project.zip"
 with zipfile.ZipFile(_local_zip, 'r') as zf:
     zf.extractall(_extract_dir)
-
-# Remove local zip file
 os.remove(_local_zip)
-
-# Add to sys.path if not already there
+''',
+            ),
+            (
+                "Configuring paths",
+                f'''
+_extract_dir = "{workspace_extract_dir}"
 if _extract_dir not in sys.path:
     sys.path.insert(0, _extract_dir)
-
-# Set working directory for relative path compatibility (Git Folders/Jobs)
 os.chdir(_extract_dir)
-
-# Clean up variables
 del _extract_dir, _dbfs_zip_path, _local_zip
-"""
+''',
+            ),
+        ]
 
     def cleanup(self) -> None:
         """Clean up DBFS and Workspace files."""
