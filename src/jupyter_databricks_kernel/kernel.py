@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html
 import logging
+import threading
+import time
 import uuid
 from typing import Any
 
@@ -15,6 +17,9 @@ from .executor import DatabricksExecutor
 from .sync import FileSync
 
 logger = logging.getLogger(__name__)
+
+# Spinner characters for progress animation
+SPINNER_CHARS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
 class DatabricksKernel(Kernel):
@@ -40,6 +45,11 @@ class DatabricksKernel(Kernel):
         self.file_sync: FileSync | None = None
         self._initialized = False
         self._last_dbfs_path: str | None = None
+        self._spinner_index = 0
+        self._progress_display_id: str | None = None
+        self._driver_logs_url: str | None = None
+        # Track sync info for display during cell execution
+        self._sync_info: str | None = None
         logger.info("Kernel initialized: session_id=%s", self._session_id)
 
     def _initialize(self) -> bool:
@@ -68,6 +78,8 @@ class DatabricksKernel(Kernel):
         # Initialize executor and file sync (reuse existing if available)
         if self.executor is None:
             self.executor = DatabricksExecutor(self._kernel_config)
+            # Cache driver logs URL
+            self._driver_logs_url = self.executor.get_driver_logs_url()
         if self.file_sync is None:
             self.file_sync = FileSync(self._kernel_config, self._session_id)
         self._initialized = True
@@ -77,60 +89,166 @@ class DatabricksKernel(Kernel):
         )
         return True
 
-    def _sync_files(self) -> bool:
+    def _send_sync_progress(self, message: str) -> None:
+        """Send sync progress update to the frontend with spinner animation.
+
+        Uses display_data with display_id for in-place updates.
+
+        Args:
+            message: Progress message to display.
+        """
+        spinner = SPINNER_CHARS[self._spinner_index % len(SPINNER_CHARS)]
+        self._spinner_index += 1
+
+        progress_text = f"{spinner} {message}"
+
+        # Use display_id for in-place updates (same as _send_progress)
+        # Include execution_count to make ID unique per cell execution
+        if not self._progress_display_id:
+            self._progress_display_id = f"progress-{self.execution_count}"
+            self.send_response(
+                self.iopub_socket,
+                "display_data",
+                {
+                    "data": {"text/plain": progress_text},
+                    "metadata": {},
+                    "transient": {"display_id": self._progress_display_id},
+                },
+            )
+        else:
+            self.send_response(
+                self.iopub_socket,
+                "update_display_data",
+                {
+                    "data": {"text/plain": progress_text},
+                    "metadata": {},
+                    "transient": {"display_id": self._progress_display_id},
+                },
+            )
+
+    def _run_with_spinner(
+        self,
+        message: str,
+        func: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Run a function while displaying a spinner animation.
+
+        Args:
+            message: Message to display with spinner.
+            func: Function to execute.
+            *args: Positional arguments for the function.
+            **kwargs: Keyword arguments for the function.
+
+        Returns:
+            The return value of the function.
+        """
+        result: Any = None
+        error: BaseException | None = None
+        done = threading.Event()
+
+        def worker() -> None:
+            nonlocal result, error
+            try:
+                result = func(*args, **kwargs)
+            except BaseException as e:
+                error = e
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+        # Update spinner while waiting
+        while not done.is_set():
+            self._send_sync_progress(message)
+            done.wait(timeout=0.1)
+
+        thread.join()
+
+        if error is not None:
+            raise error
+        return result
+
+    def _sync_files(self) -> tuple[bool, float, int]:
         """Synchronize files if needed.
 
         Returns:
-            True if sync succeeded or was not needed, False on error.
+            Tuple of (success, sync_elapsed_seconds, file_count).
+            If sync was skipped, returns (True, 0.0, 0).
         """
         if self.file_sync is None or self.executor is None:
-            return True
+            return True, 0.0, 0
 
         if not self.file_sync.needs_sync():
             logger.debug("File sync skipped: no changes detected")
-            return True
+            return True, 0.0, 0
 
         try:
             logger.debug("Starting file sync")
-            self.send_response(
-                self.iopub_socket,
-                "stream",
-                {"name": "stderr", "text": "Syncing files to Databricks...\n"},
-            )
+            sync_start = time.time()
 
-            # Upload files
-            stats = self.file_sync.sync()
+            # Total steps: 4 local + 4 remote = 8
+            total_steps = 8
+
+            # Define progress callback with step info
+            def sync_progress(message: str) -> None:
+                # Prepend step info based on message content
+                if "Collecting" in message:
+                    step_msg = f"[1/{total_steps}] {message}"
+                elif "Hashing" in message:
+                    step_msg = f"[2/{total_steps}] {message}"
+                elif "Creating" in message:
+                    step_msg = f"[3/{total_steps}] {message}"
+                elif "Uploading" in message:
+                    step_msg = f"[4/{total_steps}] {message}"
+                else:
+                    step_msg = message
+                self._send_sync_progress(step_msg)
+
+            # Upload files with progress callback
+            stats = self.file_sync.sync(on_progress=sync_progress)
             self._last_dbfs_path = stats.dbfs_path
 
-            # Execute setup code on remote
-            setup_code = self.file_sync.get_setup_code(stats.dbfs_path)
-            result = self.executor.execute(setup_code, allow_reconnect=False)
-
-            if result.status != "ok":
-                self.send_response(
-                    self.iopub_socket,
-                    "stream",
-                    {"name": "stderr", "text": f"Sync setup failed: {result.error}\n"},
+            # Execute setup steps on remote with progress
+            setup_steps = self.file_sync.get_setup_steps(stats.dbfs_path)
+            for i, (description, code) in enumerate(setup_steps):
+                step_num = 5 + i  # Steps 5-8
+                result = self._run_with_spinner(
+                    f"[{step_num}/{total_steps}] {description}...",
+                    self.executor.execute,
+                    code,
+                    allow_reconnect=False,
                 )
-                return False
 
+                if result.status != "ok":
+                    err_msg = f"Setup failed at '{description}': {result.error}\n"
+                    self.send_response(
+                        self.iopub_socket,
+                        "stream",
+                        {"name": "stderr", "text": err_msg},
+                    )
+                    return False, 0.0, 0
+
+            sync_elapsed = time.time() - sync_start
             logger.debug("File sync completed: %d files", stats.total_files)
-            self.send_response(
-                self.iopub_socket,
-                "stream",
-                {"name": "stderr", "text": "Files synced successfully.\n"},
-            )
-            return True
+
+            # Store sync info for display during cell execution
+            sync_time_str = self._format_time(sync_elapsed)
+            self._sync_info = f"Synced {stats.total_files} files in {sync_time_str}"
+
+            return True, sync_elapsed, stats.total_files
 
         except Exception as e:
             logger.warning("File sync failed: %s", e)
             self.send_response(
                 self.iopub_socket,
                 "stream",
-                {"name": "stderr", "text": f"Sync failed: {e}\n"},
+                {"name": "stderr", "text": f"✗ Sync failed: {e}\n"},
             )
             # Continue execution even if sync fails
-            return True
+            return True, 0.0, 0
 
     def _handle_reconnection(self) -> None:
         """Handle session reconnection.
@@ -175,6 +293,114 @@ class DatabricksKernel(Kernel):
                         "text": f"Warning: Failed to restore sys.path: {e}\n",
                     },
                 )
+
+    def _send_progress(
+        self,
+        cluster_state: str,
+        command_status: str,
+        elapsed_seconds: float,
+    ) -> None:
+        """Send progress update to the frontend.
+
+        Uses display_data with transient flag so output is not persisted.
+
+        Args:
+            cluster_state: Current cluster state (e.g., "RUNNING").
+            command_status: Current command status (e.g., "RUNNING").
+            elapsed_seconds: Elapsed time in seconds.
+        """
+        # Get spinner character
+        spinner = SPINNER_CHARS[self._spinner_index % len(SPINNER_CHARS)]
+        self._spinner_index += 1
+
+        # Format elapsed time with 1 decimal for smooth animation feedback
+        elapsed_str = f"{elapsed_seconds:.1f}s"
+
+        # Build progress message lines
+        lines = []
+
+        # Add sync info if available (first line)
+        if self._sync_info:
+            lines.append(f"✓ {self._sync_info}")
+
+        # Add execution progress (with spinner)
+        lines.append(
+            f"{spinner} Cluster: {cluster_state} | "
+            f"Command: {command_status} | {elapsed_str}"
+        )
+
+        # Add driver logs URL
+        if self._driver_logs_url:
+            lines.append(f"  Driver logs: {self._driver_logs_url}")
+
+        progress_text = "\n".join(lines)
+
+        # Use display_id for in-place updates
+        # First call creates the display, subsequent calls update it
+        # Include execution_count to make ID unique per cell execution
+        if not self._progress_display_id:
+            self._progress_display_id = f"progress-{self.execution_count}"
+            # First display - create it
+            self.send_response(
+                self.iopub_socket,
+                "display_data",
+                {
+                    "data": {"text/plain": progress_text},
+                    "metadata": {},
+                    "transient": {"display_id": self._progress_display_id},
+                },
+            )
+        else:
+            # Update existing display
+            self.send_response(
+                self.iopub_socket,
+                "update_display_data",
+                {
+                    "data": {"text/plain": progress_text},
+                    "metadata": {},
+                    "transient": {"display_id": self._progress_display_id},
+                },
+            )
+
+    def _format_time(self, seconds: float) -> str:
+        """Format time in seconds to human-readable string.
+
+        Args:
+            seconds: Time in seconds.
+
+        Returns:
+            Formatted time string (e.g., "1.2s" or "45s").
+        """
+        if seconds < 10:
+            return f"{seconds:.1f}s"
+        return f"{seconds:.0f}s"
+
+    def _format_completion_text(
+        self,
+        exec_seconds: float,
+    ) -> str:
+        """Format completion message text.
+
+        Args:
+            exec_seconds: Cell execution time in seconds.
+
+        Returns:
+            Formatted completion message string (multiple lines if sync occurred).
+        """
+        lines = []
+
+        # Add sync info if available
+        if self._sync_info:
+            lines.append(f"✓ {self._sync_info}")
+
+        # Add execution time
+        exec_str = self._format_time(exec_seconds)
+        lines.append(f"✓ Cell executed in {exec_str}")
+
+        # Add separator line to distinguish from output
+        lines.append("─" * 40)
+
+        return "\n".join(lines)
 
     async def do_execute(
         self,
@@ -221,12 +447,25 @@ class DatabricksKernel(Kernel):
             }
 
         # Sync files before execution
-        self._sync_files()
+        sync_success, sync_elapsed, sync_file_count = self._sync_files()
+        if not sync_success:
+            return {
+                "status": "error",
+                "execution_count": self.execution_count,
+                "ename": "SyncError",
+                "evalue": "File sync failed",
+                "traceback": [],
+            }
 
-        # Execute on Databricks
+        # Execute on Databricks with progress tracking
         assert self.executor is not None
+        exec_start_time = time.time()
         try:
-            result = self.executor.execute(code_str)
+            result = self.executor.execute(
+                code_str,
+                on_progress=self._send_progress if not silent else None,
+            )
+            exec_elapsed = time.time() - exec_start_time
 
             # Handle reconnection: re-run setup code and notify user
             if result.reconnected:
@@ -237,6 +476,22 @@ class DatabricksKernel(Kernel):
 
             if result.status == "ok":
                 if not silent:
+                    # Update progress display to show completion message
+                    if self._progress_display_id:
+                        completion_text = self._format_completion_text(exec_elapsed)
+                        self.send_response(
+                            self.iopub_socket,
+                            "update_display_data",
+                            {
+                                "data": {"text/plain": completion_text},
+                                "metadata": {},
+                                "transient": {"display_id": self._progress_display_id},
+                            },
+                        )
+                        self._progress_display_id = None
+                        self._spinner_index = 0
+                        self._sync_info = None  # Reset for next execution
+
                     # Display text output
                     if result.output:
                         self.send_response(

@@ -24,12 +24,12 @@ make sync
 
 ### 1.3. Available Commands
 
-| Command | Description |
-|---------|-------------|
-| `make install` | Install mise tools |
-| `make sync` | Sync Python dependencies with uv |
-| `make test` | Run tests |
-| `make jupyter` | Start JupyterLab |
+| Command        | Description                      |
+| ---------      | -------------                    |
+| `make install` | Install mise tools               |
+| `make sync`    | Sync Python dependencies with uv |
+| `make test`    | Run tests                        |
+| `make jupyter` | Start JupyterLab                 |
 
 ## 2. Project Structure
 
@@ -41,12 +41,12 @@ src/jupyter_databricks_kernel/
 └── config.py      # Configuration loading and validation
 ```
 
-| Module | Description |
-|--------|-------------|
-| kernel.py | Kernel lifecycle, file sync coordination, result formatting |
-| executor.py | Command Execution API, context management, reconnection |
-| sync.py | File collection, hash-based change detection, DBFS upload |
-| config.py | Environment variables, YAML config, validation |
+| Module      | Description                                                 |
+| --------    | -------------                                               |
+| kernel.py   | Kernel lifecycle, file sync coordination, result formatting |
+| executor.py | Command Execution API, context management, reconnection     |
+| sync.py     | File collection, hash-based change detection, DBFS upload   |
+| config.py   | Environment variables, YAML config, validation              |
 
 ## 3. Code Style
 
@@ -121,30 +121,102 @@ To uninstall:
 jupyter kernelspec uninstall databricks-session
 ```
 
-## 6. Pull Request Guidelines
+## 6. Using Development Version in Another Project
 
-### 6.1. Before Submitting
+When developing features, you may want to test the kernel in a separate project.
+
+### 6.1. With uv (Recommended)
+
+Add the following to your project's `pyproject.toml`:
+
+```toml
+[dependency-groups]
+dev = [
+    "jupyter-databricks-kernel",
+    "jupyterlab",
+]
+
+[tool.uv.sources]
+jupyter-databricks-kernel = { path = "../path/to/kernel", editable = true }
+```
+
+Then sync:
+
+```bash
+uv sync
+```
+
+To update after making changes to the kernel:
+
+```bash
+uv sync  # Re-syncs the editable install
+```
+
+**Note**: You must restart the Jupyter kernel after updating to load the new
+code.
+
+### 6.2. With pip
+
+Install in editable mode:
+
+```bash
+pip install -e /path/to/jupyter-databricks-kernel
+```
+
+Or install directly from GitHub:
+
+```bash
+# From a specific branch
+pip install git+https://github.com/i9wa4/jupyter-databricks-kernel.git@branch-name
+
+# From main
+pip install git+https://github.com/i9wa4/jupyter-databricks-kernel.git
+```
+
+To update:
+
+```bash
+# For editable install, just restart the kernel
+
+# For GitHub install
+pip install --upgrade git+https://github.com/i9wa4/jupyter-databricks-kernel.git@branch-name
+```
+
+### 6.3. Verifying the Version
+
+Check that the correct version is installed:
+
+```bash
+uv run python -c "import jupyter_databricks_kernel; \
+  print(jupyter_databricks_kernel.__version__)"
+```
+
+Development versions will show a version like `1.1.3.dev3+gbe2d703f8.d20251212`.
+
+## 7. Pull Request Guidelines
+
+### 7.1. Before Submitting
 
 - Run `mise exec -- pre-commit run --all-files` and fix any issues
 - Run `make test` and ensure all tests pass
 - Update documentation if needed
 - Add tests for new functionality
 
-### 6.2. PR Title and Description
+### 7.2. PR Title and Description
 
 - Use a clear, descriptive title
 - Explain what the PR does and why
 - Reference related issues (e.g., "Fixes #123")
 
-### 6.3. Review Process
+### 7.3. Review Process
 
 - PRs require at least one approval before merging
 - Address reviewer feedback promptly
 - Keep PRs focused on a single concern
 
-## 7. Issue Reporting
+## 8. Issue Reporting
 
-### 7.1. Bug Reports
+### 8.1. Bug Reports
 
 When reporting bugs, please include:
 
@@ -154,7 +226,7 @@ When reporting bugs, please include:
 - Expected vs actual behavior
 - Error messages and stack traces
 
-### 7.2. Feature Requests
+### 8.2. Feature Requests
 
 When requesting features, please include:
 
@@ -162,7 +234,7 @@ When requesting features, please include:
 - Proposed solution (if any)
 - Alternatives considered
 
-## 8. License
+## 9. License
 
 By contributing to this project, you agree that your contributions will be
 licensed under the Apache License 2.0.

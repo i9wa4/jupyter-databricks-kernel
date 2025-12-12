@@ -6,6 +6,7 @@ import base64
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
@@ -23,6 +24,12 @@ logger = logging.getLogger(__name__)
 RECONNECT_DELAY_SECONDS = 1.0  # Delay before reconnection attempt
 CONTEXT_CREATION_TIMEOUT = timedelta(minutes=5)  # Timeout for context creation
 COMMAND_EXECUTION_TIMEOUT = timedelta(minutes=10)  # Timeout for command execution
+API_POLL_INTERVAL_SECONDS = 1.0  # Interval between API status polls
+DISPLAY_UPDATE_INTERVAL_SECONDS = 0.1  # Interval between display updates
+
+# Progress callback type
+# Args: cluster_state, command_status, elapsed_seconds
+ProgressCallback = Callable[[str, str, float], None]
 
 # Pre-compiled pattern for context error detection
 # Matches errors that specifically relate to execution context invalidation
@@ -96,6 +103,44 @@ class DatabricksExecutor:
             client.clusters.wait_get_cluster_running(self.config.cluster_id)
             logger.info("Cluster is now running")
 
+    def get_cluster_state(self) -> str:
+        """Get the current cluster state.
+
+        Returns:
+            Cluster state string (e.g., "RUNNING", "PENDING", "TERMINATED").
+        """
+        if not self.config.cluster_id:
+            return "UNKNOWN"
+
+        try:
+            client = self._ensure_client()
+            cluster = client.clusters.get(self.config.cluster_id)
+            return str(cluster.state.value).upper() if cluster.state else "UNKNOWN"
+        except Exception as e:
+            logger.debug("Failed to get cluster state: %s", e)
+            return "UNKNOWN"
+
+    def get_driver_logs_url(self) -> str | None:
+        """Get the URL to the driver logs page for the cluster.
+
+        Returns:
+            URL string or None if not available.
+        """
+        if not self.config.cluster_id:
+            return None
+
+        try:
+            client = self._ensure_client()
+            host = client.config.host
+            if host:
+                # Remove trailing slash if present
+                host = host.rstrip("/")
+                return f"{host}/compute/clusters/{self.config.cluster_id}/driver-logs"
+            return None
+        except Exception as e:
+            logger.debug("Failed to get driver logs URL: %s", e)
+            return None
+
     def create_context(self) -> None:
         """Create an execution context on the Databricks cluster."""
         self._ensure_cluster_running()
@@ -152,12 +197,20 @@ class DatabricksExecutor:
         # Use pre-compiled pattern for efficient matching
         return CONTEXT_ERROR_PATTERN.search(error_str) is not None
 
-    def execute(self, code: str, *, allow_reconnect: bool = True) -> ExecutionResult:
+    def execute(
+        self,
+        code: str,
+        *,
+        allow_reconnect: bool = True,
+        on_progress: ProgressCallback | None = None,
+    ) -> ExecutionResult:
         """Execute code on the Databricks cluster.
 
         Args:
             code: The Python code to execute.
             allow_reconnect: If True, attempt to reconnect on context errors.
+            on_progress: Optional callback for progress updates.
+                Called with (cluster_state, command_status, elapsed_seconds).
 
         Returns:
             Execution result containing output or error.
@@ -178,7 +231,10 @@ class DatabricksExecutor:
             )
 
         try:
-            result = self._execute_internal(code)
+            if on_progress:
+                result = self._execute_with_polling(code, on_progress)
+            else:
+                result = self._execute_internal(code)
             return result
         except Exception as e:
             if allow_reconnect and self._is_context_invalid_error(e):
@@ -187,7 +243,10 @@ class DatabricksExecutor:
                     # Wait before reconnection to avoid hammering the API
                     time.sleep(RECONNECT_DELAY_SECONDS)
                     self.reconnect()
-                    result = self._execute_internal(code)
+                    if on_progress:
+                        result = self._execute_with_polling(code, on_progress)
+                    else:
+                        result = self._execute_internal(code)
                     return replace(result, reconnected=True)
                 except Exception as retry_error:
                     logger.error("Reconnection failed: %s", retry_error)
@@ -271,6 +330,164 @@ class DatabricksExecutor:
                 table_schema = results.schema
             else:
                 # TEXT or other types
+                if results.data is not None:
+                    output = str(results.data)
+                elif results.summary:
+                    output = results.summary
+
+            return ExecutionResult(
+                status="ok",
+                output=output,
+                images=images if images else None,
+                table_data=table_data,
+                table_schema=table_schema,
+            )
+
+        return ExecutionResult(status=status)
+
+    def _execute_with_polling(
+        self,
+        code: str,
+        on_progress: ProgressCallback,
+    ) -> ExecutionResult:
+        """Execute code with polling for progress updates.
+
+        Args:
+            code: The Python code to execute.
+            on_progress: Callback for progress updates.
+
+        Returns:
+            Execution result containing output or error.
+
+        Raises:
+            Exception: If execution fails due to API errors.
+            TimeoutError: If execution exceeds timeout.
+        """
+        client = self._ensure_client()
+        start_time = time.time()
+        timeout_seconds = COMMAND_EXECUTION_TIMEOUT.total_seconds()
+
+        # Start execution without blocking
+        waiter = client.command_execution.execute(
+            cluster_id=self.config.cluster_id,
+            context_id=self.context_id,
+            language=compute.Language.PYTHON,
+            command=code,
+        )
+
+        # Get command_id from the waiter
+        command_id = waiter.command_id
+        if not command_id:
+            raise RuntimeError("Failed to get command_id from execution")
+
+        # Poll for status with separate intervals for API and display updates
+        last_api_poll = 0.0
+        cluster_state = "UNKNOWN"
+        command_status = "UNKNOWN"
+        response = None
+
+        while True:
+            elapsed = time.time() - start_time
+
+            # Check timeout
+            if elapsed > timeout_seconds:
+                # Try to cancel the command
+                try:
+                    client.command_execution.cancel(
+                        cluster_id=self.config.cluster_id,
+                        context_id=self.context_id,
+                        command_id=command_id,
+                    )
+                except Exception:
+                    pass
+                raise TimeoutError(
+                    f"Command execution timed out after {timeout_seconds}s"
+                )
+
+            # Poll API at slower interval (1 second)
+            if elapsed - last_api_poll >= API_POLL_INTERVAL_SECONDS or response is None:
+                last_api_poll = elapsed
+                cluster_state = self.get_cluster_state()
+                # These are guaranteed non-None by execute() checks
+                assert self.config.cluster_id is not None
+                assert self.context_id is not None
+                response = client.command_execution.command_status(
+                    cluster_id=self.config.cluster_id,
+                    context_id=self.context_id,
+                    command_id=command_id,
+                )
+                command_status = (
+                    str(response.status.value).upper() if response.status else "UNKNOWN"
+                )
+
+                # Check if finished
+                if response.status in (
+                    compute.CommandStatus.FINISHED,
+                    compute.CommandStatus.ERROR,
+                    compute.CommandStatus.CANCELLED,
+                ):
+                    # Final progress update before returning
+                    on_progress(cluster_state, command_status, elapsed)
+                    return self._parse_command_response(response)
+
+            # Update display at faster interval (0.1 second)
+            on_progress(cluster_state, command_status, elapsed)
+
+            time.sleep(DISPLAY_UPDATE_INTERVAL_SECONDS)
+
+    def _parse_command_response(
+        self,
+        response: compute.CommandStatusResponse,
+    ) -> ExecutionResult:
+        """Parse command status response into ExecutionResult.
+
+        Args:
+            response: The command status response.
+
+        Returns:
+            Parsed ExecutionResult.
+        """
+        if response is None:
+            return ExecutionResult(
+                status="error",
+                error="No response from Databricks",
+            )
+
+        status = str(response.status) if response.status else "unknown"
+
+        if response.results:
+            results = response.results
+
+            if results.cause:
+                return ExecutionResult(
+                    status="error",
+                    error=results.cause,
+                    traceback=results.summary.split("\n") if results.summary else None,
+                )
+
+            output = None
+            images = None
+            table_data = None
+            table_schema = None
+
+            result_type = results.result_type
+
+            if result_type == ResultType.IMAGE:
+                if results.file_name:
+                    processed = self._process_image(results.file_name)
+                    if processed:
+                        images = [processed]
+            elif result_type == ResultType.IMAGES:
+                if results.file_names:
+                    images = []
+                    for file_name in results.file_names:
+                        processed = self._process_image(file_name)
+                        if processed:
+                            images.append(processed)
+            elif result_type == ResultType.TABLE:
+                table_data = results.data
+                table_schema = results.schema
+            else:
                 if results.data is not None:
                     output = str(results.data)
                 elif results.summary:

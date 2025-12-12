@@ -371,6 +371,171 @@ class TestExecutionResultTypes:
         assert result.output == "Hello, World!"
 
 
+class TestGetClusterState:
+    """Tests for get_cluster_state method."""
+
+    def test_returns_cluster_state(self, executor: DatabricksExecutor) -> None:
+        """Test that cluster state is returned correctly."""
+        from databricks.sdk.service.compute import State
+
+        mock_client = MagicMock()
+        mock_cluster = MagicMock()
+        mock_cluster.state = State.RUNNING
+        mock_client.clusters.get.return_value = mock_cluster
+        executor.client = mock_client
+
+        state = executor.get_cluster_state()
+
+        assert state == "RUNNING"
+
+    def test_returns_unknown_without_cluster_id(self, mock_config: MagicMock) -> None:
+        """Test that UNKNOWN is returned when cluster_id is not set."""
+        mock_config.cluster_id = None
+        executor = DatabricksExecutor(mock_config)
+
+        state = executor.get_cluster_state()
+
+        assert state == "UNKNOWN"
+
+    def test_returns_unknown_on_error(self, executor: DatabricksExecutor) -> None:
+        """Test that UNKNOWN is returned on error."""
+        mock_client = MagicMock()
+        mock_client.clusters.get.side_effect = Exception("API error")
+        executor.client = mock_client
+
+        state = executor.get_cluster_state()
+
+        assert state == "UNKNOWN"
+
+
+class TestExecuteWithPolling:
+    """Tests for _execute_with_polling method."""
+
+    def test_calls_progress_callback(self, executor: DatabricksExecutor) -> None:
+        """Test that progress callback is called during execution."""
+        from databricks.sdk.service.compute import CommandStatus, State
+
+        mock_client = MagicMock()
+
+        # Mock cluster state
+        mock_cluster = MagicMock()
+        mock_cluster.state = State.RUNNING
+        mock_client.clusters.get.return_value = mock_cluster
+
+        # Mock execute to return a waiter with command_id
+        mock_waiter = MagicMock()
+        mock_waiter.command_id = "test-command-id"
+        mock_client.command_execution.execute.return_value = mock_waiter
+
+        # Mock command_status to return FINISHED on first call
+        mock_status_response = MagicMock()
+        mock_status_response.status = CommandStatus.FINISHED
+        mock_status_response.results = MagicMock()
+        mock_status_response.results.cause = None
+        mock_status_response.results.result_type = None
+        mock_status_response.results.data = "result"
+        mock_client.command_execution.command_status.return_value = mock_status_response
+
+        executor.client = mock_client
+        executor.context_id = "test-context"
+
+        progress_calls: list[tuple[str, str, float]] = []
+
+        def on_progress(cs: str, cmd: str, elapsed: float) -> None:
+            progress_calls.append((cs, cmd, elapsed))
+
+        result = executor._execute_with_polling("print(1)", on_progress)
+
+        assert result.status == "ok"
+        assert len(progress_calls) == 1
+        assert progress_calls[0][0] == "RUNNING"
+        assert progress_calls[0][1] == "FINISHED"
+
+    def test_polls_until_finished(self, executor: DatabricksExecutor) -> None:
+        """Test that polling continues until command finishes."""
+        from databricks.sdk.service.compute import CommandStatus, State
+
+        mock_client = MagicMock()
+
+        # Mock cluster state
+        mock_cluster = MagicMock()
+        mock_cluster.state = State.RUNNING
+        mock_client.clusters.get.return_value = mock_cluster
+
+        # Mock execute
+        mock_waiter = MagicMock()
+        mock_waiter.command_id = "test-command-id"
+        mock_client.command_execution.execute.return_value = mock_waiter
+
+        # Mock command_status to return RUNNING twice, then FINISHED
+        mock_running_response = MagicMock()
+        mock_running_response.status = CommandStatus.RUNNING
+        mock_running_response.results = None
+
+        mock_finished_response = MagicMock()
+        mock_finished_response.status = CommandStatus.FINISHED
+        mock_finished_response.results = MagicMock()
+        mock_finished_response.results.cause = None
+        mock_finished_response.results.result_type = None
+        mock_finished_response.results.data = "result"
+
+        mock_client.command_execution.command_status.side_effect = [
+            mock_running_response,
+            mock_running_response,
+            mock_finished_response,
+        ]
+
+        executor.client = mock_client
+        executor.context_id = "test-context"
+
+        progress_calls: list[tuple[str, str]] = []
+
+        def on_progress(cs: str, cmd: str, elapsed: float) -> None:
+            progress_calls.append((cs, cmd))
+
+        with patch("jupyter_databricks_kernel.executor.time.sleep"):
+            with patch(
+                "jupyter_databricks_kernel.executor.API_POLL_INTERVAL_SECONDS", 0
+            ):
+                result = executor._execute_with_polling("print(1)", on_progress)
+
+        assert result.status == "ok"
+        # Progress should have been called multiple times
+        assert len(progress_calls) >= 3
+        # First calls should show RUNNING status (uppercase)
+        assert progress_calls[0][1] == "RUNNING"
+        # Last call should show FINISHED status (uppercase)
+        assert progress_calls[-1][1] == "FINISHED"
+
+    def test_execute_uses_polling_with_callback(
+        self, executor: DatabricksExecutor
+    ) -> None:
+        """Test that execute uses polling when on_progress is provided."""
+        executor.context_id = "test-context"
+
+        with patch.object(executor, "_execute_with_polling") as mock_polling:
+            mock_polling.return_value = ExecutionResult(status="ok")
+
+            def callback(c: str, s: str, e: float) -> None:
+                pass
+
+            executor.execute("print(1)", on_progress=callback)
+
+        mock_polling.assert_called_once()
+
+    def test_execute_uses_internal_without_callback(
+        self, executor: DatabricksExecutor
+    ) -> None:
+        """Test that execute uses _execute_internal when no callback."""
+        executor.context_id = "test-context"
+
+        with patch.object(executor, "_execute_internal") as mock_internal:
+            mock_internal.return_value = ExecutionResult(status="ok")
+            executor.execute("print(1)")
+
+        mock_internal.assert_called_once()
+
+
 class TestEnsureClusterRunning:
     """Tests for _ensure_cluster_running method."""
 
