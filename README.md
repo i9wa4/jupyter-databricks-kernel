@@ -23,11 +23,6 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 1. Install the kernel:
 
    ```bash
-   # With uv
-   uv pip install jupyter-databricks-kernel
-   uv run python -m jupyter_databricks_kernel.install
-
-   # With pip
    pip install jupyter-databricks-kernel
    python -m jupyter_databricks_kernel.install
    ```
@@ -142,7 +137,7 @@ use_gitignore = true
 You can execute notebooks from the command line using `jupyter execute`:
 
 ```bash
-jupyter execute notebook.ipynb --kernel_name=databricks
+jupyter execute notebook.ipynb --kernel_name=databricks --inplace
 ```
 
 To save the output to a different file:
