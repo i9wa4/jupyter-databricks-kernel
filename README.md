@@ -137,15 +137,49 @@ use_gitignore = true
 
 [sdk-auth]: https://docs.databricks.com/en/dev-tools/sdk-python.html#authentication
 
-## 5. Known Limitations
+## 5. CLI Execution
+
+You can execute notebooks from the command line using `jupyter execute`:
+
+```bash
+jupyter execute notebook.ipynb --kernel_name=databricks
+```
+
+To save the output to a different file:
+
+```bash
+jupyter execute notebook.ipynb --kernel_name=databricks --output=output.ipynb
+```
+
+### 5.1. Options
+
+| Option              | Description                                       |
+| ------------------- | ------------------------------------------------- |
+| `--kernel_name`     | Kernel name (use `databricks`)                    |
+| `--output`          | Output file name                                  |
+| `--inplace`         | Overwrite input file with results                 |
+| `--timeout`         | Cell execution timeout in seconds                 |
+| `--startup_timeout` | Kernel startup timeout in seconds (default: 60)   |
+| `--allow-errors`    | Continue execution even if a cell raises an error |
+
+### 5.2. Notes
+
+If the cluster is stopped, kernel startup may take 5-6 minutes. Increase
+`--startup_timeout` to avoid timeout errors:
+
+```bash
+jupyter execute notebook.ipynb --kernel_name=databricks --startup_timeout=600
+```
+
+## 6. Known Limitations
 
 - Serverless compute is not supported (Command Execution API limitation)
 - `input()` and interactive prompts do not work
 - Interactive widgets (ipywidgets) are not supported
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
-### 6.1. Kernel feels slow
+### 7.1. Kernel feels slow
 
 File sync may be uploading unnecessary files. Check your sync settings:
 
@@ -182,10 +216,10 @@ File sync may be uploading unnecessary files. Check your sync settings:
    enabled = false
    ```
 
-## 7. Development
+## 8. Development
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and guidelines.
 
-## 8. License
+## 9. License
 
 Apache License 2.0
