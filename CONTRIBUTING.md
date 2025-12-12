@@ -98,7 +98,8 @@ mise exec -- uv run pytest tests/test_config.py -v
 ### 4.2. Writing Tests
 
 - Place tests in the `tests/` directory
-- Use descriptive test names: `test_should_return_error_when_cluster_id_missing`
+- Use descriptive test names:
+  `test_validate_returns_error_when_cluster_id_missing`
 - Mock external dependencies (Databricks API calls)
 - Test both success and error cases
 

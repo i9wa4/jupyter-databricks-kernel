@@ -10,14 +10,6 @@ from jupyter_databricks_kernel.executor import DatabricksExecutor, ExecutionResu
 
 
 @pytest.fixture
-def mock_config() -> MagicMock:
-    """Create a mock config."""
-    config = MagicMock()
-    config.cluster_id = "test-cluster-id"
-    return config
-
-
-@pytest.fixture
 def executor(mock_config: MagicMock) -> DatabricksExecutor:
     """Create an executor with mock config."""
     return DatabricksExecutor(mock_config)
@@ -429,3 +421,45 @@ class TestEnsureClusterRunning:
         executor._ensure_cluster_running()
 
         mock_client.clusters.get.assert_not_called()
+
+
+class TestTimeoutHandling:
+    """Tests for timeout error handling using shared fixture."""
+
+    def test_execute_returns_error_on_timeout(
+        self,
+        mock_config: MagicMock,
+        mock_client_timeout: MagicMock,
+    ) -> None:
+        """Test that timeout errors are returned as error results."""
+        executor = DatabricksExecutor(mock_config, client=mock_client_timeout)
+        executor.context_id = "test-context"
+
+        # Use execute() which catches exceptions and returns error results
+        result = executor.execute("long_running_code()")
+
+        assert result.status == "error"
+        assert "timed out" in (result.error or "").lower()
+
+
+class TestClusterStateWithFixture:
+    """Tests for cluster state handling using shared fixture."""
+
+    def test_starts_terminated_cluster_with_fixture(
+        self,
+        mock_config: MagicMock,
+        mock_client_cluster_terminated: MagicMock,
+    ) -> None:
+        """Test that terminated cluster is started using shared fixture."""
+        executor = DatabricksExecutor(
+            mock_config, client=mock_client_cluster_terminated
+        )
+
+        executor._ensure_cluster_running()
+
+        mock_client_cluster_terminated.clusters.start.assert_called_once_with(
+            "test-cluster-id"
+        )
+        mock_client_cluster_terminated.clusters.wait_get_cluster_running.assert_called_once_with(
+            "test-cluster-id"
+        )

@@ -22,17 +22,6 @@ from jupyter_databricks_kernel.sync import (
 
 
 @pytest.fixture
-def mock_config() -> MagicMock:
-    """Create a mock config."""
-    config = MagicMock()
-    config.sync.enabled = True
-    config.sync.source = "./src"
-    config.sync.exclude = []
-    config.sync.use_gitignore = False
-    return config
-
-
-@pytest.fixture
 def file_sync(mock_config: MagicMock) -> FileSync:
     """Create a FileSync instance with mock config."""
     return FileSync(mock_config, "test-session")

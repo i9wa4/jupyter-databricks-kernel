@@ -122,24 +122,6 @@ def mock_file_sync(
 
 
 @pytest.fixture
-def mock_client_context_error(mock_workspace_client: MagicMock) -> MagicMock:
-    """Create a mock client that raises context errors.
-
-    Use this fixture to test reconnection logic.
-
-    Args:
-        mock_workspace_client: Base mock client.
-
-    Returns:
-        Mock client configured to raise context errors.
-    """
-    mock_workspace_client.command_execution.execute.return_value.result.side_effect = (
-        Exception("Context not found")
-    )
-    return mock_workspace_client
-
-
-@pytest.fixture
 def mock_client_cluster_terminated(mock_workspace_client: MagicMock) -> MagicMock:
     """Create a mock client with a terminated cluster.
 
