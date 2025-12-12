@@ -120,6 +120,27 @@ class DatabricksExecutor:
             logger.debug("Failed to get cluster state: %s", e)
             return "UNKNOWN"
 
+    def get_driver_logs_url(self) -> str | None:
+        """Get the URL to the driver logs page for the cluster.
+
+        Returns:
+            URL string or None if not available.
+        """
+        if not self.config.cluster_id:
+            return None
+
+        try:
+            client = self._ensure_client()
+            host = client.config.host
+            if host:
+                # Remove trailing slash if present
+                host = host.rstrip("/")
+                return f"{host}/compute/clusters/{self.config.cluster_id}/driver-logs"
+            return None
+        except Exception as e:
+            logger.debug("Failed to get driver logs URL: %s", e)
+            return None
+
     def create_context(self) -> None:
         """Create an execution context on the Databricks cluster."""
         self._ensure_cluster_running()

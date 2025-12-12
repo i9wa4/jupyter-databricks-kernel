@@ -47,6 +47,7 @@ class DatabricksKernel(Kernel):
         self._last_dbfs_path: str | None = None
         self._spinner_index = 0
         self._progress_display_id: str | None = None
+        self._driver_logs_url: str | None = None
         logger.info("Kernel initialized: session_id=%s", self._session_id)
 
     def _initialize(self) -> bool:
@@ -75,6 +76,8 @@ class DatabricksKernel(Kernel):
         # Initialize executor and file sync (reuse existing if available)
         if self.executor is None:
             self.executor = DatabricksExecutor(self._kernel_config)
+            # Cache driver logs URL
+            self._driver_logs_url = self.executor.get_driver_logs_url()
         if self.file_sync is None:
             self.file_sync = FileSync(self._kernel_config, self._session_id)
         self._initialized = True
@@ -295,6 +298,10 @@ class DatabricksKernel(Kernel):
             f"{spinner} Cluster: {cluster_state} | "
             f"Command: {command_status} | {elapsed_str}"
         )
+
+        # Add driver logs URL on second line
+        if self._driver_logs_url:
+            progress_text += f"\n  Driver logs: {self._driver_logs_url}"
 
         # Clear previous output and display new progress
         # wait=False for immediate update (better animation)
