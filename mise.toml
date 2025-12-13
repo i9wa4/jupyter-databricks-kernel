@@ -12,4 +12,4 @@ pre-commit = "4.5.0"
 "aqua:zizmorcore/zizmor"      = "1.18.0"
 
 # Cargo Tools
-"cargo:rumdl" = "0.0.190"
+"cargo:rumdl" = "0.0.194"
