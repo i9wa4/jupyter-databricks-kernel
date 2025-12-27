@@ -42,19 +42,19 @@ repos:
 
       - id: ruff-check
         name: ruff check
-        entry: mise exec -- uv run --no-sync ruff check --fix
+        entry: mise exec -- uv run ruff check --fix
         language: system
         types: [python]
 
       - id: ruff-format
         name: ruff format
-        entry: mise exec -- uv run --no-sync ruff format
+        entry: mise exec -- uv run ruff format
         language: system
         types: [python]
 
       - id: mypy
         name: mypy
-        entry: mise exec -- uv run --no-sync mypy src
+        entry: mise exec -- uv run mypy src
         language: system
         types: [python]
         pass_filenames: false
