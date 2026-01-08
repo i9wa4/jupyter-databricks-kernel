@@ -13,6 +13,7 @@
       "every weekend"
     ]
   },
+  "minimumReleaseAge": "7 days",
   "packageRules": [
     {
       "matchManagers": ["pyenv"],
