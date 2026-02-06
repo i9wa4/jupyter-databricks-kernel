@@ -187,9 +187,7 @@ workspace_extract_dir = "/pyproject/extract/path"
 [tool.jupyter-databricks-kernel.sync]
 workspace_extract_dir = "/pyproject/extract/path"
 """)
-        monkeypatch.setenv(
-            "JUPYTER_DATABRICKS_KERNEL_EXTRACT_DIR", "/env/extract/path"
-        )
+        monkeypatch.setenv("JUPYTER_DATABRICKS_KERNEL_EXTRACT_DIR", "/env/extract/path")
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)

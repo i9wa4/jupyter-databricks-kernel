@@ -918,29 +918,29 @@ except (OSError, PermissionError, FileNotFoundError) as e:
             ),
             (
                 "Copying from DBFS",
-                f'''
+                f"""
 _dbfs_zip_path = "dbfs:{dbfs_path}"
 _local_zip = _extract_dir + "/project.zip"
 dbutils.fs.cp(_dbfs_zip_path, "file:" + _local_zip)
-''',
+""",
             ),
             (
                 "Extracting files",
-                f'''
+                """
 _local_zip = _extract_dir + "/project.zip"
 with zipfile.ZipFile(_local_zip, 'r') as zf:
     zf.extractall(_extract_dir)
 os.remove(_local_zip)
-''',
+""",
             ),
             (
                 "Configuring paths",
-                f'''
+                """
 if _extract_dir not in sys.path:
     sys.path.insert(0, _extract_dir)
 os.chdir(_extract_dir)
 del _extract_dir, _primary_dir, _fallback_dir, _dbfs_zip_path, _local_zip, _logger
-''',
+""",
             ),
         ]
 
