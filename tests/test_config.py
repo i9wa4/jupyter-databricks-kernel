@@ -181,7 +181,10 @@ workspace_extract_dir = "/pyproject/extract/path"
     def test_env_overrides_pyproject_workspace_extract_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test that environment variable overrides pyproject.toml for workspace_extract_dir."""
+        """Test environment variable overrides pyproject.toml.
+
+        Tests workspace_extract_dir configuration priority.
+        """
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("""
 [tool.jupyter-databricks-kernel.sync]

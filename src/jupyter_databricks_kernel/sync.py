@@ -872,7 +872,8 @@ del _extract_dir, _dbfs_zip_path, _local_zip
                 ),
             ]
 
-        # Use intelligent fallback: try /Workspace/Users/ first, fallback to /tmp/workspace
+        # Use intelligent fallback: try /Workspace/Users/ first,
+        # fallback to /tmp/workspace
         user_name = self._get_user_name()
         workspace_extract_dir = (
             f"/Workspace/Users/{user_name}/jupyter_databricks_kernel/{self.session_id}"
