@@ -1039,3 +1039,156 @@ class TestGetSourcePathWithBasePath:
 
         # Should resolve to project_root/src
         assert source_path == src_dir
+
+
+class TestGetSetupSteps:
+    """Tests for FileSync.get_setup_steps() method."""
+
+    def test_default_fallback_logic(self, mock_file_sync: FileSync) -> None:
+        """Test that fallback logic is included when no custom path is set."""
+        dbfs_path = "/tmp/test/project.zip"
+        steps = mock_file_sync.get_setup_steps(dbfs_path)
+
+        # Should return 4 steps
+        assert len(steps) == 4
+        assert steps[0][0] == "Preparing directory"
+        assert steps[1][0] == "Copying from DBFS"
+        assert steps[2][0] == "Extracting files"
+        assert steps[3][0] == "Configuring paths"
+
+        # Check that first step includes fallback logic
+        prepare_code = steps[0][1]
+        assert "_primary_dir" in prepare_code
+        assert "_fallback_dir" in prepare_code
+        assert "/Workspace/Users/" in prepare_code
+        assert "/tmp/jupyter_databricks_kernel/" in prepare_code
+        assert "/workspace" in prepare_code  # Fallback path has /workspace suffix
+        assert "try:" in prepare_code
+        assert "except (OSError, PermissionError, FileNotFoundError)" in prepare_code
+        assert "logging" in prepare_code  # INFO level logging
+        assert "_logger.info" in prepare_code
+
+    def test_custom_workspace_extract_dir(self, mock_file_sync: FileSync) -> None:
+        """Test that custom workspace_extract_dir is used when configured."""
+        # Set custom extract dir
+        custom_dir = "/custom/path/to/extract"
+        mock_file_sync.config.sync.workspace_extract_dir = custom_dir
+
+        dbfs_path = "/tmp/test/project.zip"
+        steps = mock_file_sync.get_setup_steps(dbfs_path)
+
+        # Should return 4 steps
+        assert len(steps) == 4
+
+        # Check that first step uses custom path without fallback logic
+        prepare_code = steps[0][1]
+        assert custom_dir in prepare_code
+        assert "_primary_dir" not in prepare_code
+        assert "_fallback_dir" not in prepare_code
+        assert "try:" not in prepare_code
+
+    def test_session_id_in_paths(self, mock_file_sync: FileSync) -> None:
+        """Test that session ID is included in generated paths."""
+        dbfs_path = "/tmp/test/project.zip"
+        steps = mock_file_sync.get_setup_steps(dbfs_path)
+
+        prepare_code = steps[0][1]
+        # Session ID should be in both primary and fallback paths
+        assert "test-session-id" in prepare_code
+
+    def test_dbfs_path_in_code(self, mock_file_sync: FileSync) -> None:
+        """Test that DBFS path is correctly embedded in generated code."""
+        dbfs_path = "/tmp/test/project.zip"
+        steps = mock_file_sync.get_setup_steps(dbfs_path)
+
+        # Check first step
+        prepare_code = steps[0][1]
+        assert f"dbfs:{dbfs_path}" in prepare_code
+
+        # Check second step (copying)
+        copy_code = steps[1][1]
+        assert f"dbfs:{dbfs_path}" in copy_code
+
+
+class TestGetUserName:
+    """Tests for FileSync._get_user_name() method with service principal support."""
+
+    def test_regular_user_with_user_name(
+        self, mock_config: MagicMock, mock_workspace_client: MagicMock
+    ) -> None:
+        """Test that user_name is used when available."""
+        file_sync = FileSync(mock_config, "test-session", client=mock_workspace_client)
+
+        # Regular user has user_name
+        mock_workspace_client.current_user.me.return_value.user_name = (
+            "user@example.com"
+        )
+
+        user_name = file_sync._get_user_name()
+        assert user_name == "user@example.com"
+
+    def test_service_principal_with_application_id(
+        self, mock_config: MagicMock, mock_workspace_client: MagicMock
+    ) -> None:
+        """Test that application_id is used when user_name is not available."""
+        file_sync = FileSync(mock_config, "test-session", client=mock_workspace_client)
+
+        # Service principal has application_id but no user_name
+        me_mock = MagicMock()
+        me_mock.user_name = None
+        me_mock.application_id = "12345678-1234-1234-1234-123456789abc"
+        mock_workspace_client.current_user.me.return_value = me_mock
+
+        user_name = file_sync._get_user_name()
+        assert user_name == "12345678-1234-1234-1234-123456789abc"
+
+    def test_service_principal_with_display_name(
+        self, mock_config: MagicMock, mock_workspace_client: MagicMock
+    ) -> None:
+        """Test that display_name is used as fallback."""
+        file_sync = FileSync(mock_config, "test-session", client=mock_workspace_client)
+
+        # Service principal has display_name but no user_name or application_id
+        me_mock = MagicMock()
+        me_mock.user_name = None
+        me_mock.application_id = None
+        me_mock.display_name = "My Service Principal"
+        mock_workspace_client.current_user.me.return_value = me_mock
+
+        user_name = file_sync._get_user_name()
+        assert user_name == "My_Service_Principal"  # Sanitized
+
+    def test_service_principal_no_attributes(
+        self, mock_config: MagicMock, mock_workspace_client: MagicMock
+    ) -> None:
+        """Test that 'unknown' is used when no attributes are available."""
+        file_sync = FileSync(mock_config, "test-session", client=mock_workspace_client)
+
+        # Service principal has no identifying attributes
+        me_mock = MagicMock()
+        me_mock.user_name = None
+        me_mock.application_id = None
+        me_mock.display_name = None
+        mock_workspace_client.current_user.me.return_value = me_mock
+
+        user_name = file_sync._get_user_name()
+        assert user_name == "unknown"
+
+    def test_user_name_cached(
+        self, mock_config: MagicMock, mock_workspace_client: MagicMock
+    ) -> None:
+        """Test that user_name is cached after first call."""
+        file_sync = FileSync(mock_config, "test-session", client=mock_workspace_client)
+
+        mock_workspace_client.current_user.me.return_value.user_name = (
+            "user@example.com"
+        )
+
+        # First call
+        user_name1 = file_sync._get_user_name()
+        # Second call
+        user_name2 = file_sync._get_user_name()
+
+        assert user_name1 == user_name2
+        # me() should be called only once due to caching
+        assert mock_workspace_client.current_user.me.call_count == 1

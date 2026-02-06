@@ -21,6 +21,7 @@ class TestSyncConfigDefaults:
         assert config.max_size_mb is None
         assert config.max_file_size_mb is None
         assert config.use_gitignore is True
+        assert config.workspace_extract_dir is None
 
 
 class TestConfigDefaults:
@@ -145,6 +146,57 @@ source = "./custom"
 
         # Should log warning
         assert "Failed to parse" in caplog.text
+
+    def test_load_workspace_extract_dir_from_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test loading workspace_extract_dir from environment variable."""
+        monkeypatch.setenv(
+            "JUPYTER_DATABRICKS_KERNEL_EXTRACT_DIR", "/custom/extract/path"
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load()
+        assert config.sync.workspace_extract_dir == "/custom/extract/path"
+
+    def test_load_workspace_extract_dir_from_pyproject(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test loading workspace_extract_dir from pyproject.toml."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.jupyter-databricks-kernel.sync]
+workspace_extract_dir = "/pyproject/extract/path"
+""")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.delenv("JUPYTER_DATABRICKS_KERNEL_EXTRACT_DIR", raising=False)
+
+        config = Config.load()
+        assert config.sync.workspace_extract_dir == "/pyproject/extract/path"
+
+    def test_env_overrides_pyproject_workspace_extract_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that environment variable overrides pyproject.toml for workspace_extract_dir."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("""
+[tool.jupyter-databricks-kernel.sync]
+workspace_extract_dir = "/pyproject/extract/path"
+""")
+        monkeypatch.setenv(
+            "JUPYTER_DATABRICKS_KERNEL_EXTRACT_DIR", "/env/extract/path"
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load()
+        # Environment variable should take precedence
+        assert config.sync.workspace_extract_dir == "/env/extract/path"
 
 
 class TestConfigValidate:

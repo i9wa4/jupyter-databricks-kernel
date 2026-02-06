@@ -427,13 +427,22 @@ class FileSync:
     def _get_user_name(self) -> str:
         """Get the current user's email/username (sanitized for path safety).
 
+        For service principals, user_name may not exist. Falls back to
+        application_id, display_name, or "unknown" in that order.
+
         Returns:
-            The sanitized user's email address.
+            The sanitized user's email address or identifier.
         """
         if self._user_name is None:
             client = self._ensure_client()
             me = client.current_user.me()
-            raw_name = me.user_name or "unknown"
+            # NOTE: Service principals may not have user_name attribute
+            raw_name = (
+                getattr(me, "user_name", None)
+                or getattr(me, "application_id", None)
+                or getattr(me, "display_name", None)
+                or "unknown"
+            )
             self._user_name = self._sanitize_path_component(raw_name)
         return self._user_name
 
@@ -811,16 +820,14 @@ class FileSync:
         Returns:
             List of (description, code) tuples.
         """
-        # Use /Workspace/Users/{email}/ which is allowed on Shared clusters
-        user_name = self._get_user_name()
-        workspace_extract_dir = (
-            f"/Workspace/Users/{user_name}/jupyter_databricks_kernel/{self.session_id}"
-        )
-
-        return [
-            (
-                "Preparing directory",
-                f'''
+        # Check if custom workspace_extract_dir is configured
+        if self.config.sync.workspace_extract_dir:
+            workspace_extract_dir = self.config.sync.workspace_extract_dir
+            # Use custom path directly without fallback
+            return [
+                (
+                    "Preparing directory",
+                    f'''
 import sys
 import zipfile
 import os
@@ -833,11 +840,85 @@ if os.path.exists(_extract_dir):
     shutil.rmtree(_extract_dir)
 os.makedirs(_extract_dir, exist_ok=True)
 ''',
+                ),
+                (
+                    "Copying from DBFS",
+                    f'''
+_extract_dir = "{workspace_extract_dir}"
+_dbfs_zip_path = "dbfs:{dbfs_path}"
+_local_zip = _extract_dir + "/project.zip"
+dbutils.fs.cp(_dbfs_zip_path, "file:" + _local_zip)
+''',
+                ),
+                (
+                    "Extracting files",
+                    f'''
+_extract_dir = "{workspace_extract_dir}"
+_local_zip = _extract_dir + "/project.zip"
+with zipfile.ZipFile(_local_zip, 'r') as zf:
+    zf.extractall(_extract_dir)
+os.remove(_local_zip)
+''',
+                ),
+                (
+                    "Configuring paths",
+                    f'''
+_extract_dir = "{workspace_extract_dir}"
+if _extract_dir not in sys.path:
+    sys.path.insert(0, _extract_dir)
+os.chdir(_extract_dir)
+del _extract_dir, _dbfs_zip_path, _local_zip
+''',
+                ),
+            ]
+
+        # Use intelligent fallback: try /Workspace/Users/ first, fallback to /tmp/workspace
+        user_name = self._get_user_name()
+        workspace_extract_dir = (
+            f"/Workspace/Users/{user_name}/jupyter_databricks_kernel/{self.session_id}"
+        )
+        # NOTE: Use /workspace suffix to avoid confusion with DBFS upload path
+        fallback_extract_dir = (
+            f"/tmp/jupyter_databricks_kernel/{self.session_id}/workspace"
+        )
+
+        return [
+            (
+                "Preparing directory",
+                f'''
+import sys
+import zipfile
+import os
+import shutil
+import logging
+
+_logger = logging.getLogger("jupyter_databricks_kernel")
+
+# Try /Workspace/Users/ first, fallback to /tmp/workspace if it fails
+_primary_dir = "{workspace_extract_dir}"
+_fallback_dir = "{fallback_extract_dir}"
+_dbfs_zip_path = "dbfs:{dbfs_path}"
+
+try:
+    if os.path.exists(_primary_dir):
+        shutil.rmtree(_primary_dir)
+    os.makedirs(_primary_dir, exist_ok=True)
+    _extract_dir = _primary_dir
+except (OSError, PermissionError, FileNotFoundError) as e:
+    # Fallback to /tmp/workspace for service principals or permission issues
+    _logger.info(
+        f"Failed to create {{_primary_dir}}: {{e.__class__.__name__}}: {{e}}. "
+        f"Falling back to {{_fallback_dir}}"
+    )
+    if os.path.exists(_fallback_dir):
+        shutil.rmtree(_fallback_dir)
+    os.makedirs(_fallback_dir, exist_ok=True)
+    _extract_dir = _fallback_dir
+''',
             ),
             (
                 "Copying from DBFS",
                 f'''
-_extract_dir = "{workspace_extract_dir}"
 _dbfs_zip_path = "dbfs:{dbfs_path}"
 _local_zip = _extract_dir + "/project.zip"
 dbutils.fs.cp(_dbfs_zip_path, "file:" + _local_zip)
@@ -846,7 +927,6 @@ dbutils.fs.cp(_dbfs_zip_path, "file:" + _local_zip)
             (
                 "Extracting files",
                 f'''
-_extract_dir = "{workspace_extract_dir}"
 _local_zip = _extract_dir + "/project.zip"
 with zipfile.ZipFile(_local_zip, 'r') as zf:
     zf.extractall(_extract_dir)
@@ -856,17 +936,22 @@ os.remove(_local_zip)
             (
                 "Configuring paths",
                 f'''
-_extract_dir = "{workspace_extract_dir}"
 if _extract_dir not in sys.path:
     sys.path.insert(0, _extract_dir)
 os.chdir(_extract_dir)
-del _extract_dir, _dbfs_zip_path, _local_zip
+del _extract_dir, _primary_dir, _fallback_dir, _dbfs_zip_path, _local_zip, _logger
 ''',
             ),
         ]
 
     def cleanup(self) -> None:
-        """Clean up DBFS and Workspace files."""
+        """Clean up DBFS and Workspace files.
+
+        Note: This method cleans up DBFS and Workspace paths. Local filesystem
+        paths (like /tmp/ on the cluster) are not cleaned up as they are
+        inaccessible from the kernel side and typically get cleaned up
+        automatically or overwritten in subsequent sessions.
+        """
         if not self._synced:
             return
 
@@ -878,7 +963,8 @@ del _extract_dir, _dbfs_zip_path, _local_zip
         except Exception as e:
             logger.debug("DBFS cleanup error (ignored): %s", e)
 
-        # Also clean up Workspace directory if user_name is known
+        # Clean up Workspace directory if user_name is known
+        # This handles the primary path for regular users
         if self._user_name is not None:
             workspace_dir = (
                 f"/Workspace/Users/{self._user_name}"
@@ -889,3 +975,8 @@ del _extract_dir, _dbfs_zip_path, _local_zip
                 client.workspace.delete(workspace_dir, recursive=True)
             except Exception as e:
                 logger.debug("Workspace cleanup error (ignored): %s", e)
+
+        # NOTE: Local filesystem paths (e.g., /tmp/ on cluster) used by the
+        # fallback mechanism are not cleaned up here as they cannot be accessed
+        # from the kernel side. They are typically cleaned up automatically by
+        # the cluster or overwritten in subsequent sessions.

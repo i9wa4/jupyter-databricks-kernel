@@ -27,6 +27,7 @@ class SyncConfig:
     max_size_mb: float | None = None
     max_file_size_mb: float | None = None
     use_gitignore: bool = True
+    workspace_extract_dir: str | None = None
 
 
 @dataclass
@@ -93,6 +94,14 @@ class Config:
         if config_path is not None and config_path.exists():
             config.base_path = config_path.parent
             config._load_from_pyproject(config_path)
+
+        # Load workspace_extract_dir from environment variable (highest priority)
+        workspace_extract_dir = os.environ.get("JUPYTER_DATABRICKS_KERNEL_EXTRACT_DIR")
+        if workspace_extract_dir:
+            config.sync.workspace_extract_dir = workspace_extract_dir
+            logger.debug(
+                "Workspace extract dir from environment: %s", workspace_extract_dir
+            )
 
         logger.debug(
             "Configuration loaded: cluster_id=%s, sync_enabled=%s, base_path=%s",
@@ -168,6 +177,8 @@ class Config:
                 self.sync.max_file_size_mb = sync_data["max_file_size_mb"]
             if "use_gitignore" in sync_data:
                 self.sync.use_gitignore = sync_data["use_gitignore"]
+            if "workspace_extract_dir" in sync_data:
+                self.sync.workspace_extract_dir = sync_data["workspace_extract_dir"]
 
     def validate(self) -> list[str]:
         """Validate the configuration.
