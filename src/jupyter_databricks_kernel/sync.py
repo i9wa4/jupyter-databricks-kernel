@@ -774,13 +774,16 @@ class FileSync:
         import base64
 
         # Encode to Base64
-        zip_b64 = base64.b64encode(zip_data).decode('utf-8')
+        zip_b64 = base64.b64encode(zip_data).decode("utf-8")
 
         # Split into 1MB chunks
         chunk_size = 1024 * 1024
-        chunks = [zip_b64[i:i+chunk_size] for i in range(0, len(zip_b64), chunk_size)]
+        chunks = [
+            zip_b64[i : i + chunk_size] for i in range(0, len(zip_b64), chunk_size)
+        ]
 
         # Use executor's context if provided, otherwise create minimal execution context
+        context_id: str | None
         if executor and executor.context_id:
             context_id = executor.context_id
         elif self._command_context_id is None:
@@ -792,6 +795,9 @@ class FileSync:
             context_id = self._command_context_id
         else:
             context_id = self._command_context_id
+
+        if context_id is None:
+            raise RuntimeError("Failed to create or retrieve execution context")
 
         # Create target directory on cluster with UID fallback
         target_dir = f"/tmp/jupyter_databricks_kernel_{self.session_id}"
@@ -835,7 +841,7 @@ print(target_dir)
         for i, chunk in enumerate(chunks):
             mode = "w" if i == 0 else "a"
             # Escape quotes in chunk for Python string
-            chunk_escaped = chunk.replace('\\', '\\\\').replace('"', '\\"')
+            chunk_escaped = chunk.replace("\\", "\\\\").replace('"', '\\"')
             code = f'''
 with open("{tmp_b64_path}", "{mode}") as f:
     f.write("{chunk_escaped}")
@@ -850,16 +856,16 @@ with open("{tmp_b64_path}", "{mode}") as f:
 
             if result and result.results and result.results.cause:
                 raise RuntimeError(
-                    f"Chunk {i+1}/{len(chunks)} failed: {result.results.cause}"
+                    f"Chunk {i + 1}/{len(chunks)} failed: {result.results.cause}"
                 )
             if result and result.status != compute.CommandStatus.FINISHED:
                 raise RuntimeError(
-                    f"Chunk {i+1}/{len(chunks)} transfer failed: "
+                    f"Chunk {i + 1}/{len(chunks)} transfer failed: "
                     f"status={result.status}"
                 )
 
             if on_progress:
-                on_progress(f"Transferred chunk {i+1}/{len(chunks)}...")
+                on_progress(f"Transferred chunk {i + 1}/{len(chunks)}...")
 
         # Decode Base64 on cluster
         decode_code = f'''

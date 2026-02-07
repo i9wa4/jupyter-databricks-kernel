@@ -1190,6 +1190,7 @@ class TestGetUserName:
         # me() should be called only once due to caching
         assert mock_workspace_client.current_user.me.call_count == 1
 
+
 class TestCommandAPITransfer:
     """Tests for Command API-based file transfer with Base64 encoding."""
 
@@ -1203,7 +1204,9 @@ class TestCommandAPITransfer:
 
         # Split into chunks (same logic as sync())
         chunk_size = 1024 * 1024  # 1MB
-        chunks = [encoded[i:i+chunk_size] for i in range(0, len(encoded), chunk_size)]
+        chunks = [
+            encoded[i : i + chunk_size] for i in range(0, len(encoded), chunk_size)
+        ]
 
         # Should have 3 chunks (2MB * 4/3 ≈ 2.67MB -> 3 chunks)
         assert len(chunks) == 3
