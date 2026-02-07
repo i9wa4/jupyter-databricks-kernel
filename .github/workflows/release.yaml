@@ -1,10 +1,21 @@
 name: Release
-run-name: ${{ github.event_name }} on ${{ github.ref_name }} by @${{ github.actor }}
+run-name: >-
+  ${{
+    github.event_name == 'workflow_dispatch'
+    && format('release {0} by @{1}', inputs.version, github.actor)
+    || format('{0} on {1} by @{2}', github.event_name, github.ref_name, github.actor)
+  }}
 
 on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., v1.2.0)"
+        required: true
+        type: string
 
 permissions: {}
 
@@ -20,6 +31,37 @@ jobs:
       contents: write
 
     steps:
+      - name: Validate version format
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: $VERSION (must match v*.*.*)"
+            exit 1
+          fi
+
+      - name: Validate branch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [[ "$BRANCH" != "main" ]]; then
+            echo "::error::Release must be dispatched from main branch"
+            exit 1
+          fi
+
+      - name: Check tag does not exist
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if gh api "repos/${{ github.repository }}/git/ref/tags/$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag $VERSION already exists"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -28,4 +70,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+          target_commitish: ${{ github.event_name == 'workflow_dispatch' && 'main' || '' }}
           generate_release_notes: true
