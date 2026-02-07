@@ -59,13 +59,14 @@ select = [
     "PERF", # Perflint
 ]
 ignore = [
-    "S101",  # assert is fine in tests
-    "S108",  # /tmp is used for DBFS paths, not local temp files
+    "S108",  # /tmp is used for cluster-local temp paths
     "S110",  # try-except-pass is acceptable for cleanup code
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101"]
+"src/jupyter_databricks_kernel/executor.py" = ["S101"]  # Type narrowing asserts
+"src/jupyter_databricks_kernel/kernel.py" = ["S101"]  # Type narrowing asserts
 
 [tool.ruff.lint.isort]
 known-first-party = ["jupyter_databricks_kernel"]
