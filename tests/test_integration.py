@@ -5,6 +5,12 @@ They are skipped in CI environments where cluster_id is not configured.
 
 Run with: pytest -m integration
 Skip with: pytest -m "not integration"
+
+To use a specific Databricks profile (e.g., Service Principal):
+    DATABRICKS_CONFIG_PROFILE=oauth-m2m-test pytest -m integration
+
+The DATABRICKS_CONFIG_PROFILE environment variable is automatically
+respected by both Config.load() and WorkspaceClient().
 """
 
 from __future__ import annotations
@@ -17,7 +23,11 @@ from jupyter_databricks_kernel.config import Config
 
 
 def _has_cluster_id() -> bool:
-    """Check if cluster_id is available from env or ~/.databrickscfg."""
+    """Check if cluster_id is available from env or ~/.databrickscfg.
+
+    Respects DATABRICKS_CONFIG_PROFILE environment variable to select
+    a specific profile from ~/.databrickscfg (defaults to DEFAULT).
+    """
     if os.environ.get("DATABRICKS_CLUSTER_ID"):
         return True
     try:
