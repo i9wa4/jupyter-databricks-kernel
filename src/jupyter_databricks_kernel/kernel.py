@@ -189,6 +189,10 @@ class DatabricksKernel(Kernel):
             logger.debug("Starting file sync")
             sync_start = time.time()
 
+            # Ensure executor context is created before sync
+            if self.executor.context_id is None:
+                self.executor.create_context()
+
             # Total steps: 4 local + 4 remote = 8
             total_steps = 8
 
@@ -208,7 +212,8 @@ class DatabricksKernel(Kernel):
                 self._send_sync_progress(step_msg)
 
             # Upload files with progress callback
-            stats = self.file_sync.sync(on_progress=sync_progress)
+            # IMPORTANT: Pass executor to share execution context with setup steps
+            stats = self.file_sync.sync(on_progress=sync_progress, executor=self.executor)
             self._last_dbfs_path = stats.dbfs_path
 
             # Execute setup steps on remote with progress

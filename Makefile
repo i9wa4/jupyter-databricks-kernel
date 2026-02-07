@@ -21,4 +21,7 @@ test:  ## Run tests
 	mise exec -- uv run pytest
 
 jupyter:  ## Start JupyterLab
+	mise exec -- uv run jupyter-lab
+
+jupyter-debug:  ## Start JupyterLab in debug mode
 	mise exec -- uv run jupyter-lab --debug

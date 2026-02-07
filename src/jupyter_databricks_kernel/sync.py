@@ -393,6 +393,7 @@ class FileSync:
         self._pathspec: pathspec.PathSpec | None = None
         self._pathspec_mtime: float = 0.0
         self._file_cache: FileCache | None = None
+        self._command_context_id: str | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
         """Ensure the WorkspaceClient is initialized.
@@ -725,11 +726,13 @@ class FileSync:
     def sync(
         self,
         on_progress: SyncProgressCallback | None = None,
+        executor: Any | None = None,
     ) -> SyncStats:
         """Synchronize files to DBFS.
 
         Args:
             on_progress: Optional callback for progress updates.
+            executor: Optional DatabricksExecutor for sharing execution context.
 
         Returns:
             Sync statistics including changed files, sizes, and duration.
@@ -737,6 +740,9 @@ class FileSync:
         Raises:
             FileSizeError: If file size limits are exceeded.
         """
+        from databricks.sdk.service import compute
+        from datetime import timedelta
+
         start_time = time.time()
 
         dbfs_dir = f"/tmp/jupyter_databricks_kernel/{self.session_id}"
@@ -764,10 +770,115 @@ class FileSync:
         if on_progress:
             on_progress(f"Uploading ({self._format_size(len(zip_data))})...")
 
-        # Upload to DBFS using SDK's high-level API
+        # [PoC] Upload via Command API (chunked Base64 transfer)
         client = self._ensure_client()
-        with client.dbfs.open(dbfs_zip_path, write=True, overwrite=True) as f:
-            f.write(zip_data)
+        import base64
+
+        # Encode to Base64
+        zip_b64 = base64.b64encode(zip_data).decode('utf-8')
+
+        # Split into 1MB chunks
+        chunk_size = 1024 * 1024
+        chunks = [zip_b64[i:i+chunk_size] for i in range(0, len(zip_b64), chunk_size)]
+
+        # Use executor's context if provided, otherwise create minimal execution context
+        if executor and executor.context_id:
+            context_id = executor.context_id
+        elif self._command_context_id is None:
+            response = client.command_execution.create(
+                cluster_id=self.config.cluster_id,
+                language=compute.Language.PYTHON,
+            ).result()
+            self._command_context_id = response.id if response else None
+            context_id = self._command_context_id
+        else:
+            context_id = self._command_context_id
+
+        # Create target directory on cluster with UID fallback
+        target_dir = f"/tmp/jupyter_databricks_kernel_{self.session_id}"
+        mkdir_code = f"""
+import os
+target_dir = "{target_dir}"
+try:
+    os.makedirs(target_dir, exist_ok=True)
+    probe = os.path.join(target_dir, '.probe')
+    with open(probe, 'w') as f:
+        f.write('ok')
+    os.remove(probe)
+except PermissionError:
+    target_dir = f"{{target_dir}}_{{os.getuid()}}"
+    os.makedirs(target_dir, exist_ok=True)
+print(target_dir)
+"""
+        result = client.command_execution.execute(
+            cluster_id=self.config.cluster_id,
+            context_id=context_id,
+            language=compute.Language.PYTHON,
+            command=mkdir_code,
+        ).result(timeout=timedelta(minutes=5))
+
+        if result and result.results and result.results.cause:
+            raise RuntimeError(f"Failed to create directory: {result.results.cause}")
+        if result and result.status != compute.CommandStatus.FINISHED:
+            raise RuntimeError(f"Failed to create directory: status={result.status}")
+
+        # Get actual directory path from result (may have UID suffix if permission error occurred)
+        actual_dir = result.results.data.strip() if result and result.results and result.results.data else target_dir
+        cluster_zip_path = f"{actual_dir}/project.zip"
+        tmp_b64_path = f"{actual_dir}/project.zip.b64"
+
+        # Send chunks via Command API
+        for i, chunk in enumerate(chunks):
+            mode = "w" if i == 0 else "a"
+            # Escape quotes in chunk for Python string
+            chunk_escaped = chunk.replace('\\', '\\\\').replace('"', '\\"')
+            code = f'''
+with open("{tmp_b64_path}", "{mode}") as f:
+    f.write("{chunk_escaped}")
+'''
+            # Execute chunk write
+            result = client.command_execution.execute(
+                cluster_id=self.config.cluster_id,
+                context_id=context_id,
+                language=compute.Language.PYTHON,
+                command=code,
+            ).result(timeout=timedelta(minutes=5))
+
+            if result and result.results and result.results.cause:
+                raise RuntimeError(f"Chunk {i+1}/{len(chunks)} failed: {result.results.cause}")
+            if result and result.status != compute.CommandStatus.FINISHED:
+                raise RuntimeError(f"Chunk {i+1}/{len(chunks)} transfer failed: status={result.status}")
+
+            if on_progress:
+                on_progress(f"Transferred chunk {i+1}/{len(chunks)}...")
+
+        # Decode Base64 on cluster
+        decode_code = f'''
+import base64
+import os
+with open("{tmp_b64_path}", "r") as f:
+    b64_data = f.read()
+decoded = base64.b64decode(b64_data)
+with open("{cluster_zip_path}", "wb") as f:
+    f.write(decoded)
+os.remove("{tmp_b64_path}")
+'''
+
+        result = client.command_execution.execute(
+            cluster_id=self.config.cluster_id,
+            context_id=context_id,
+            language=compute.Language.PYTHON,
+            command=decode_code,
+        ).result(timeout=timedelta(minutes=5))
+
+        # Check for errors in result.results.cause (Python exceptions)
+        if result and result.results and result.results.cause:
+            raise RuntimeError(f"Base64 decode failed: {result.results.cause}")
+        if result and result.status != compute.CommandStatus.FINISHED:
+            raise RuntimeError(f"Base64 decode failed on cluster: status={result.status}")
+
+        # Update dbfs_path to point to cluster path
+        dbfs_zip_path = cluster_zip_path
 
         # Remove deleted files from cache
         deleted_files = file_cache.get_deleted_files(all_files)
@@ -820,6 +931,8 @@ class FileSync:
         Returns:
             List of (description, code) tuples.
         """
+        # TODO: Unify custom path branch to use Command API method instead of DBFS
+        # Currently this branch still uses dbutils.fs.cp which requires DBFS permissions
         # Check if custom workspace_extract_dir is configured
         if self.config.sync.workspace_extract_dir:
             workspace_extract_dir = self.config.sync.workspace_extract_dir
@@ -878,9 +991,9 @@ del _extract_dir, _dbfs_zip_path, _local_zip
         workspace_extract_dir = (
             f"/Workspace/Users/{user_name}/jupyter_databricks_kernel/{self.session_id}"
         )
-        # NOTE: Use /workspace suffix to avoid confusion with DBFS upload path
+        # NOTE: Use /workspace suffix to avoid confusion with zip path
         fallback_extract_dir = (
-            f"/tmp/jupyter_databricks_kernel/{self.session_id}/workspace"
+            f"/tmp/jupyter_databricks_kernel_{self.session_id}/workspace"
         )
 
         return [
@@ -898,7 +1011,6 @@ _logger = logging.getLogger("jupyter_databricks_kernel")
 # Try /Workspace/Users/ first, fallback to /tmp/workspace if it fails
 _primary_dir = "{workspace_extract_dir}"
 _fallback_dir = "{fallback_extract_dir}"
-_dbfs_zip_path = "dbfs:{dbfs_path}"
 
 try:
     if os.path.exists(_primary_dir):
@@ -918,20 +1030,13 @@ except (OSError, PermissionError, FileNotFoundError) as e:
 ''',
             ),
             (
-                "Copying from DBFS",
-                f"""
-_dbfs_zip_path = "dbfs:{dbfs_path}"
-_local_zip = _extract_dir + "/project.zip"
-dbutils.fs.cp(_dbfs_zip_path, "file:" + _local_zip)
-""",
-            ),
-            (
                 "Extracting files",
-                """
-_local_zip = _extract_dir + "/project.zip"
-with zipfile.ZipFile(_local_zip, 'r') as zf:
+                f"""
+# [PoC] Zip already on cluster at {dbfs_path}
+_cluster_zip = "{dbfs_path}"
+with zipfile.ZipFile(_cluster_zip, 'r') as zf:
     zf.extractall(_extract_dir)
-os.remove(_local_zip)
+os.remove(_cluster_zip)
 """,
             ),
             (
@@ -940,7 +1045,7 @@ os.remove(_local_zip)
 if _extract_dir not in sys.path:
     sys.path.insert(0, _extract_dir)
 os.chdir(_extract_dir)
-del _extract_dir, _primary_dir, _fallback_dir, _dbfs_zip_path, _local_zip, _logger
+del _extract_dir, _primary_dir, _fallback_dir, _logger
 """,
             ),
         ]
@@ -977,7 +1082,8 @@ del _extract_dir, _primary_dir, _fallback_dir, _dbfs_zip_path, _local_zip, _logg
             except Exception as e:
                 logger.debug("Workspace cleanup error (ignored): %s", e)
 
-        # NOTE: Local filesystem paths (e.g., /tmp/ on cluster) used by the
-        # fallback mechanism are not cleaned up here as they cannot be accessed
-        # from the kernel side. They are typically cleaned up automatically by
-        # the cluster or overwritten in subsequent sessions.
+        # NOTE: Local filesystem paths (e.g., /tmp/jupyter_databricks_kernel_{session_id}/) used by
+        # Command API transfer are not cleaned up here as they require an active
+        # execution context. These should be cleaned up via Command API execution
+        # when the executor context is available. Files in /tmp/ are typically
+        # cleaned up automatically by the cluster or overwritten in subsequent sessions.

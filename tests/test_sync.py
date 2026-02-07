@@ -1049,19 +1049,18 @@ class TestGetSetupSteps:
         dbfs_path = "/tmp/test/project.zip"
         steps = mock_file_sync.get_setup_steps(dbfs_path)
 
-        # Should return 4 steps
-        assert len(steps) == 4
+        # Should return 3 steps (Command API method: no DBFS copy step)
+        assert len(steps) == 3
         assert steps[0][0] == "Preparing directory"
-        assert steps[1][0] == "Copying from DBFS"
-        assert steps[2][0] == "Extracting files"
-        assert steps[3][0] == "Configuring paths"
+        assert steps[1][0] == "Extracting files"
+        assert steps[2][0] == "Configuring paths"
 
         # Check that first step includes fallback logic
         prepare_code = steps[0][1]
         assert "_primary_dir" in prepare_code
         assert "_fallback_dir" in prepare_code
         assert "/Workspace/Users/" in prepare_code
-        assert "/tmp/jupyter_databricks_kernel/" in prepare_code
+        assert "/tmp/jupyter_databricks_kernel_" in prepare_code
         assert "/workspace" in prepare_code  # Fallback path has /workspace suffix
         assert "try:" in prepare_code
         assert "except (OSError, PermissionError, FileNotFoundError)" in prepare_code
@@ -1097,17 +1096,15 @@ class TestGetSetupSteps:
         assert "test-session-id" in prepare_code
 
     def test_dbfs_path_in_code(self, mock_file_sync: FileSync) -> None:
-        """Test that DBFS path is correctly embedded in generated code."""
+        """Test that zip path is correctly embedded in generated code."""
         dbfs_path = "/tmp/test/project.zip"
         steps = mock_file_sync.get_setup_steps(dbfs_path)
 
-        # Check first step
-        prepare_code = steps[0][1]
-        assert f"dbfs:{dbfs_path}" in prepare_code
-
-        # Check second step (copying)
-        copy_code = steps[1][1]
-        assert f"dbfs:{dbfs_path}" in copy_code
+        # Command API method: zip is already on cluster, no dbfs: prefix
+        # Check that extraction step references the cluster zip path
+        extract_code = steps[1][1]
+        assert dbfs_path in extract_code
+        assert "_cluster_zip" in extract_code
 
 
 class TestGetUserName:
