@@ -49,6 +49,10 @@ class TestRealClusterExecution:
             executor.create_context()
             assert executor.context_id is not None
             assert len(executor.context_id) > 0
+        except ValueError as e:
+            if "auth" in str(e).lower() or "token" in str(e).lower():
+                pytest.skip(f"Databricks authentication not available: {e}")
+            raise
         finally:
             executor.destroy_context()
             assert executor.context_id is None
@@ -64,6 +68,10 @@ class TestRealClusterExecution:
         try:
             result = executor.execute("print('Hello from Databricks')")
             assert result.status == "ok"
+        except ValueError as e:
+            if "auth" in str(e).lower() or "token" in str(e).lower():
+                pytest.skip(f"Databricks authentication not available: {e}")
+            raise
         finally:
             executor.destroy_context()
 
@@ -79,6 +87,10 @@ class TestRealClusterExecution:
             result = executor.execute("1 + 1")
             assert result.status == "ok"
             assert result.output is not None
+        except ValueError as e:
+            if "auth" in str(e).lower() or "token" in str(e).lower():
+                pytest.skip(f"Databricks authentication not available: {e}")
+            raise
         finally:
             executor.destroy_context()
 
@@ -95,6 +107,10 @@ class TestRealClusterExecution:
             assert result.status == "error"
             assert result.error is not None
             assert "ValueError" in result.error or "test error" in result.error
+        except ValueError as e:
+            if "auth" in str(e).lower() or "token" in str(e).lower():
+                pytest.skip(f"Databricks authentication not available: {e}")
+            raise
         finally:
             executor.destroy_context()
 
@@ -112,10 +128,15 @@ class TestRealClusterSync:
         config = Config.load()
         file_sync = FileSync(config, "test-session")
 
-        # Access the private method to test user name retrieval
-        client = file_sync._ensure_client()
-        user = client.current_user.me()
+        try:
+            # Access the private method to test user name retrieval
+            client = file_sync._ensure_client()
+            user = client.current_user.me()
 
-        assert user is not None
+            assert user is not None
+        except ValueError as e:
+            if "auth" in str(e).lower() or "token" in str(e).lower():
+                pytest.skip(f"Databricks authentication not available: {e}")
+            raise
         assert user.user_name is not None
         assert len(user.user_name) > 0

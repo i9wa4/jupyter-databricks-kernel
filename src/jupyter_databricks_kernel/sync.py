@@ -768,7 +768,7 @@ class FileSync:
         if on_progress:
             on_progress(f"Uploading ({self._format_size(len(zip_data))})...")
 
-        # [PoC] Upload via Command API (chunked Base64 transfer)
+        # Upload via Command API (chunked Base64 transfer)
         client = self._ensure_client()
         import base64
 
@@ -1027,7 +1027,7 @@ except (OSError, PermissionError, FileNotFoundError) as e:
             (
                 "Extracting files",
                 f"""
-# [PoC] Zip already on cluster at {cluster_zip_path}
+# Zip is already on cluster at {cluster_zip_path}
 _cluster_zip = "{cluster_zip_path}"
 with zipfile.ZipFile(_cluster_zip, 'r') as zf:
     zf.extractall(_extract_dir)
