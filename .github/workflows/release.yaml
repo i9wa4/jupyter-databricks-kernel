@@ -17,7 +17,9 @@ on:
         required: true
         type: string
 
-permissions: {}
+permissions:
+  contents: write
+  id-token: write
 
 defaults:
   run:
@@ -44,9 +46,9 @@ jobs:
       - name: Validate branch
         if: github.event_name == 'workflow_dispatch'
         env:
-          BRANCH: ${{ github.ref_name }}
+          REF: ${{ github.ref }}
         run: |
-          if [[ "$BRANCH" != "main" ]]; then
+          if [[ "$REF" != "refs/heads/main" ]]; then
             echo "::error::Release must be dispatched from main branch"
             exit 1
           fi
@@ -73,3 +75,11 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
           target_commitish: ${{ github.event_name == 'workflow_dispatch' && 'main' || '' }}
           generate_release_notes: true
+
+  publish:
+    needs: release
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish.yaml
