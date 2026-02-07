@@ -386,8 +386,13 @@ class FileSync:
             client: Optional WorkspaceClient instance for dependency injection.
                 If not provided, a client will be created lazily when needed.
         """
+        import re
+
         self.config = config
         self.client = client
+        # Validate session_id format to prevent path traversal
+        if not re.match(r"^[a-zA-Z0-9_-]+$", session_id):
+            raise ValueError(f"Invalid session_id format: {session_id}")
         self.session_id = session_id
         self._synced = False
         self._user_name: str | None = None
@@ -805,14 +810,14 @@ class FileSync:
 import os
 target_dir = "{target_dir}"
 try:
-    os.makedirs(target_dir, exist_ok=True)
+    os.makedirs(target_dir, mode=0o700, exist_ok=True)
     probe = os.path.join(target_dir, '.probe')
     with open(probe, 'w') as f:
         f.write('ok')
     os.remove(probe)
 except PermissionError:
     target_dir = f"{{target_dir}}_{{os.getuid()}}"
-    os.makedirs(target_dir, exist_ok=True)
+    os.makedirs(target_dir, mode=0o700, exist_ok=True)
 print(target_dir)
 """
         result = client.command_execution.execute(
@@ -834,6 +839,9 @@ print(target_dir)
             if result and result.results and result.results.data
             else target_dir
         )
+        # Validate actual_dir format to prevent path traversal
+        if not re.match(r"^/tmp/jupyter_databricks_kernel_[a-zA-Z0-9_-]+$", actual_dir):
+            raise ValueError(f"Invalid directory path from cluster: {actual_dir}")
         cluster_zip_path = f"{actual_dir}/project.zip"
         tmp_b64_path = f"{actual_dir}/project.zip.b64"
 
@@ -945,9 +953,6 @@ os.remove("{tmp_b64_path}")
         Returns:
             List of (description, code) tuples.
         """
-        # TODO: Unify custom path branch to use Command API method instead of DBFS
-        # Currently this branch still uses dbutils.fs.cp which requires DBFS permissions
-        # See #162 for related scalability improvements
         # Check if custom workspace_extract_dir is configured
         if self.config.sync.workspace_extract_dir:
             workspace_extract_dir = self.config.sync.workspace_extract_dir
@@ -962,20 +967,20 @@ import os
 import shutil
 
 _extract_dir = "{workspace_extract_dir}"
-_dbfs_zip_path = "dbfs:{cluster_zip_path}"
+_cluster_zip_path = "{cluster_zip_path}"
 
 if os.path.exists(_extract_dir):
     shutil.rmtree(_extract_dir)
-os.makedirs(_extract_dir, exist_ok=True)
+os.makedirs(_extract_dir, mode=0o700, exist_ok=True)
 ''',
                 ),
                 (
-                    "Copying from DBFS",
+                    "Copying from cluster",
                     f'''
 _extract_dir = "{workspace_extract_dir}"
-_dbfs_zip_path = "dbfs:{cluster_zip_path}"
+_cluster_zip_path = "{cluster_zip_path}"
 _local_zip = _extract_dir + "/project.zip"
-dbutils.fs.cp(_dbfs_zip_path, "file:" + _local_zip)
+shutil.copy(_cluster_zip_path, _local_zip)
 ''',
                 ),
                 (
@@ -995,7 +1000,7 @@ _extract_dir = "{workspace_extract_dir}"
 if _extract_dir not in sys.path:
     sys.path.insert(0, _extract_dir)
 os.chdir(_extract_dir)
-del _extract_dir, _dbfs_zip_path, _local_zip
+del _extract_dir, _cluster_zip_path, _local_zip
 ''',
                 ),
             ]
@@ -1051,7 +1056,7 @@ except (OSError, PermissionError, FileNotFoundError) as e:
 _cluster_zip = "{cluster_zip_path}"
 with zipfile.ZipFile(_cluster_zip, 'r') as zf:
     zf.extractall(_extract_dir)
-os.remove(_cluster_zip)
+# NOTE: Keep zip file for potential reconnection scenarios
 """,
             ),
             (
@@ -1096,6 +1101,18 @@ del _extract_dir, _primary_dir, _fallback_dir, _logger
                 client.workspace.delete(workspace_dir, recursive=True)
             except Exception as e:
                 logger.debug("Workspace cleanup error (ignored): %s", e)
+
+        # Clean up self-managed command execution context
+        if self._command_context_id and self.config.cluster_id:
+            try:
+                client = self._ensure_client()
+                client.command_execution.destroy(
+                    cluster_id=self.config.cluster_id,
+                    context_id=self._command_context_id,
+                )
+            except Exception as e:
+                logger.debug("Context cleanup error (ignored): %s", e)
+            self._command_context_id = None
 
         # NOTE: Local filesystem paths used by Command API transfer
         # (e.g., /tmp/jupyter_databricks_kernel_{session_id}/)
