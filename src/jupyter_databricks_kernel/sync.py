@@ -928,6 +928,7 @@ os.remove("{tmp_b64_path}")
         """
         # TODO: Unify custom path branch to use Command API method instead of DBFS
         # Currently this branch still uses dbutils.fs.cp which requires DBFS permissions
+        # See #162 for related scalability improvements
         # Check if custom workspace_extract_dir is configured
         if self.config.sync.workspace_extract_dir:
             workspace_extract_dir = self.config.sync.workspace_extract_dir
