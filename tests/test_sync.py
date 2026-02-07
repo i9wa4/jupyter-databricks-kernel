@@ -1200,29 +1200,31 @@ class TestCommandAPITransfer:
         # Create test data that will be ~2.5MB after Base64 encoding
         test_data = b"x" * (2 * 1024 * 1024)  # 2MB
         encoded = base64.b64encode(test_data).decode("utf-8")
-        
+
         # Split into chunks (same logic as sync())
         chunk_size = 1024 * 1024  # 1MB
         chunks = [encoded[i:i+chunk_size] for i in range(0, len(encoded), chunk_size)]
-        
+
         # Should have 3 chunks (2MB * 4/3 ≈ 2.67MB -> 3 chunks)
         assert len(chunks) == 3
         assert len(chunks[0]) == chunk_size
         assert len(chunks[1]) == chunk_size
         assert len(chunks[2]) < chunk_size
 
-    def test_executor_context_sharing(self, mock_file_sync: FileSync, tmp_path: Path) -> None:
+    def test_executor_context_sharing(
+        self, mock_file_sync: FileSync, tmp_path: Path
+    ) -> None:
         """Test that executor context is shared between sync and setup."""
-        from unittest.mock import Mock, MagicMock
-        
+        from unittest.mock import MagicMock, Mock
+
         # Create mock executor with context_id
         mock_executor = Mock()
         mock_executor.context_id = "test-context-123"
-        
+
         # Mock WorkspaceClient and command_execution
         mock_client = MagicMock()
         mock_file_sync.client = mock_client
-        
+
         # Mock command execution responses
         mock_result = MagicMock()
         mock_result.status = MagicMock()
@@ -1230,23 +1232,26 @@ class TestCommandAPITransfer:
         mock_result.results = MagicMock()
         mock_result.results.cause = None
         mock_result.results.data = "/tmp/jupyter_databricks_kernel_test-session"
-        
-        mock_client.command_execution.execute.return_value.result.return_value = mock_result
-        
+
+        mock_client.command_execution.execute.return_value.result.return_value = (
+            mock_result
+        )
+
         # Create test file
         test_file = tmp_path / "test.py"
         test_file.write_text("print('test')")
-        
+
         # Mock _get_all_files to return our test file
         mock_file_sync._get_all_files = Mock(return_value=[test_file])
-        
+
         # Execute sync with executor parameter
         try:
-            stats = mock_file_sync.sync(executor=mock_executor)
+            mock_file_sync.sync(executor=mock_executor)
             # Verify that command_execution.execute was called
             assert mock_client.command_execution.execute.called
         except Exception:
-            # Expected to fail in mock environment, we just verify the context sharing logic
+            # Expected to fail in mock environment
+            # We just verify the context sharing logic
             pass
 
     def test_uid_fallback_mkdir_code(self) -> None:
@@ -1273,9 +1278,12 @@ print(target_dir)
         assert ".probe" in mkdir_code_template
         assert "print(target_dir)" in mkdir_code_template
 
-    def test_command_api_error_handling(self, mock_file_sync: FileSync, tmp_path: Path) -> None:
-        """Test that Command API errors are properly handled via result.results.cause."""
-        from unittest.mock import Mock, MagicMock
+    def test_command_api_error_handling(
+        self, mock_file_sync: FileSync, tmp_path: Path
+    ) -> None:
+        """Test Command API error handling via result.results.cause."""
+        from unittest.mock import MagicMock, Mock
+
         import pytest
 
         # Mock WorkspaceClient and command_execution
@@ -1289,7 +1297,9 @@ print(target_dir)
         mock_result.results = MagicMock()
         mock_result.results.cause = "ExecutionError: Permission denied"
 
-        mock_client.command_execution.execute.return_value.result.return_value = mock_result
+        mock_client.command_execution.execute.return_value.result.return_value = (
+            mock_result
+        )
 
         # Create test file
         test_file = tmp_path / "test.py"
@@ -1303,4 +1313,5 @@ print(target_dir)
             mock_file_sync.sync()
 
         # Verify error message contains cause information
-        assert "cause" in str(exc_info.value).lower() or "error" in str(exc_info.value).lower()
+        error_msg = str(exc_info.value).lower()
+        assert "cause" in error_msg or "error" in error_msg

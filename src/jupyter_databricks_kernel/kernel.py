@@ -212,8 +212,10 @@ class DatabricksKernel(Kernel):
                 self._send_sync_progress(step_msg)
 
             # Upload files with progress callback
-            # IMPORTANT: Pass executor to share execution context with setup steps
-            stats = self.file_sync.sync(on_progress=sync_progress, executor=self.executor)
+            # IMPORTANT: Pass executor to share execution context
+            stats = self.file_sync.sync(
+                on_progress=sync_progress, executor=self.executor
+            )
             self._last_cluster_zip_path = stats.cluster_zip_path
 
             # Execute setup steps on remote with progress

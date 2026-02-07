@@ -741,8 +741,9 @@ class FileSync:
         Raises:
             FileSizeError: If file size limits are exceeded.
         """
-        from databricks.sdk.service import compute
         from datetime import timedelta
+
+        from databricks.sdk.service import compute
 
         start_time = time.time()
 
@@ -820,8 +821,13 @@ print(target_dir)
         if result and result.status != compute.CommandStatus.FINISHED:
             raise RuntimeError(f"Failed to create directory: status={result.status}")
 
-        # Get actual directory path from result (may have UID suffix if permission error occurred)
-        actual_dir = result.results.data.strip() if result and result.results and result.results.data else target_dir
+        # Get actual directory path from result
+        # (may have UID suffix if permission error occurred)
+        actual_dir = (
+            result.results.data.strip()
+            if result and result.results and result.results.data
+            else target_dir
+        )
         cluster_zip_path = f"{actual_dir}/project.zip"
         tmp_b64_path = f"{actual_dir}/project.zip.b64"
 
@@ -843,9 +849,14 @@ with open("{tmp_b64_path}", "{mode}") as f:
             ).result(timeout=timedelta(minutes=5))
 
             if result and result.results and result.results.cause:
-                raise RuntimeError(f"Chunk {i+1}/{len(chunks)} failed: {result.results.cause}")
+                raise RuntimeError(
+                    f"Chunk {i+1}/{len(chunks)} failed: {result.results.cause}"
+                )
             if result and result.status != compute.CommandStatus.FINISHED:
-                raise RuntimeError(f"Chunk {i+1}/{len(chunks)} transfer failed: status={result.status}")
+                raise RuntimeError(
+                    f"Chunk {i+1}/{len(chunks)} transfer failed: "
+                    f"status={result.status}"
+                )
 
             if on_progress:
                 on_progress(f"Transferred chunk {i+1}/{len(chunks)}...")
@@ -873,7 +884,9 @@ os.remove("{tmp_b64_path}")
         if result and result.results and result.results.cause:
             raise RuntimeError(f"Base64 decode failed: {result.results.cause}")
         if result and result.status != compute.CommandStatus.FINISHED:
-            raise RuntimeError(f"Base64 decode failed on cluster: status={result.status}")
+            raise RuntimeError(
+                f"Base64 decode failed on cluster: status={result.status}"
+            )
 
         # Remove deleted files from cache
         deleted_files = file_cache.get_deleted_files(all_files)
@@ -1078,8 +1091,9 @@ del _extract_dir, _primary_dir, _fallback_dir, _logger
             except Exception as e:
                 logger.debug("Workspace cleanup error (ignored): %s", e)
 
-        # NOTE: Local filesystem paths (e.g., /tmp/jupyter_databricks_kernel_{session_id}/) used by
-        # Command API transfer are not cleaned up here as they require an active
+        # NOTE: Local filesystem paths used by Command API transfer
+        # (e.g., /tmp/jupyter_databricks_kernel_{session_id}/)
+        # are not cleaned up here as they require an active
         # execution context. These should be cleaned up via Command API execution
         # when the executor context is available. Files in /tmp/ are typically
         # cleaned up automatically by the cluster or overwritten in subsequent sessions.

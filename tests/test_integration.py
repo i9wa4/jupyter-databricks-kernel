@@ -59,7 +59,8 @@ class TestRealClusterExecution:
             assert executor.context_id is not None
             assert len(executor.context_id) > 0
         except Exception as e:
-            if any(keyword in str(e).lower() for keyword in ["auth", "token", "credential", "permission"]):
+            auth_keywords = ["auth", "token", "credential", "permission"]
+            if any(keyword in str(e).lower() for keyword in auth_keywords):
                 pytest.skip(f"Databricks authentication not available: {e}")
             raise
         finally:
@@ -78,7 +79,8 @@ class TestRealClusterExecution:
             result = executor.execute("print('Hello from Databricks')")
             assert result.status == "ok"
         except Exception as e:
-            if any(keyword in str(e).lower() for keyword in ["auth", "token", "credential", "permission"]):
+            auth_keywords = ["auth", "token", "credential", "permission"]
+            if any(keyword in str(e).lower() for keyword in auth_keywords):
                 pytest.skip(f"Databricks authentication not available: {e}")
             raise
         finally:
@@ -97,7 +99,8 @@ class TestRealClusterExecution:
             assert result.status == "ok"
             assert result.output is not None
         except Exception as e:
-            if any(keyword in str(e).lower() for keyword in ["auth", "token", "credential", "permission"]):
+            auth_keywords = ["auth", "token", "credential", "permission"]
+            if any(keyword in str(e).lower() for keyword in auth_keywords):
                 pytest.skip(f"Databricks authentication not available: {e}")
             raise
         finally:
@@ -117,7 +120,8 @@ class TestRealClusterExecution:
             assert result.error is not None
             assert "ValueError" in result.error or "test error" in result.error
         except Exception as e:
-            if any(keyword in str(e).lower() for keyword in ["auth", "token", "credential", "permission"]):
+            auth_keywords = ["auth", "token", "credential", "permission"]
+            if any(keyword in str(e).lower() for keyword in auth_keywords):
                 pytest.skip(f"Databricks authentication not available: {e}")
             raise
         finally:
@@ -146,6 +150,7 @@ class TestRealClusterSync:
             assert user.user_name is not None
             assert len(user.user_name) > 0
         except Exception as e:
-            if any(keyword in str(e).lower() for keyword in ["auth", "token", "credential", "permission"]):
+            auth_keywords = ["auth", "token", "credential", "permission"]
+            if any(keyword in str(e).lower() for keyword in auth_keywords):
                 pytest.skip(f"Databricks authentication not available: {e}")
             raise
