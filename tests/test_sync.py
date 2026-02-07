@@ -558,7 +558,7 @@ class TestSyncStats:
         assert stats.skipped_files == 0
         assert stats.total_files == 0
         assert stats.sync_duration == 0.0
-        assert stats.dbfs_path == ""
+        assert stats.cluster_zip_path == ""
 
     def test_with_values(self) -> None:
         """Test with custom values."""
@@ -568,14 +568,14 @@ class TestSyncStats:
             skipped_files=10,
             total_files=13,
             sync_duration=1.5,
-            dbfs_path="/tmp/test/project.zip",
+            cluster_zip_path="/tmp/test/project.zip",
         )
         assert stats.changed_files == 3
         assert stats.changed_size == 1024
         assert stats.skipped_files == 10
         assert stats.total_files == 13
         assert stats.sync_duration == 1.5
-        assert stats.dbfs_path == "/tmp/test/project.zip"
+        assert stats.cluster_zip_path == "/tmp/test/project.zip"
 
 
 class TestDefaultExcludePatterns:
@@ -1046,8 +1046,8 @@ class TestGetSetupSteps:
 
     def test_default_fallback_logic(self, mock_file_sync: FileSync) -> None:
         """Test that fallback logic is included when no custom path is set."""
-        dbfs_path = "/tmp/test/project.zip"
-        steps = mock_file_sync.get_setup_steps(dbfs_path)
+        cluster_zip_path = "/tmp/test/project.zip"
+        steps = mock_file_sync.get_setup_steps(cluster_zip_path)
 
         # Should return 3 steps (Command API method: no DBFS copy step)
         assert len(steps) == 3
@@ -1073,8 +1073,8 @@ class TestGetSetupSteps:
         custom_dir = "/custom/path/to/extract"
         mock_file_sync.config.sync.workspace_extract_dir = custom_dir
 
-        dbfs_path = "/tmp/test/project.zip"
-        steps = mock_file_sync.get_setup_steps(dbfs_path)
+        cluster_zip_path = "/tmp/test/project.zip"
+        steps = mock_file_sync.get_setup_steps(cluster_zip_path)
 
         # Should return 4 steps
         assert len(steps) == 4
@@ -1088,22 +1088,22 @@ class TestGetSetupSteps:
 
     def test_session_id_in_paths(self, mock_file_sync: FileSync) -> None:
         """Test that session ID is included in generated paths."""
-        dbfs_path = "/tmp/test/project.zip"
-        steps = mock_file_sync.get_setup_steps(dbfs_path)
+        cluster_zip_path = "/tmp/test/project.zip"
+        steps = mock_file_sync.get_setup_steps(cluster_zip_path)
 
         prepare_code = steps[0][1]
         # Session ID should be in both primary and fallback paths
         assert "test-session-id" in prepare_code
 
-    def test_dbfs_path_in_code(self, mock_file_sync: FileSync) -> None:
+    def test_cluster_zip_path_in_code(self, mock_file_sync: FileSync) -> None:
         """Test that zip path is correctly embedded in generated code."""
-        dbfs_path = "/tmp/test/project.zip"
-        steps = mock_file_sync.get_setup_steps(dbfs_path)
+        cluster_zip_path = "/tmp/test/project.zip"
+        steps = mock_file_sync.get_setup_steps(cluster_zip_path)
 
         # Command API method: zip is already on cluster, no dbfs: prefix
         # Check that extraction step references the cluster zip path
         extract_code = steps[1][1]
-        assert dbfs_path in extract_code
+        assert cluster_zip_path in extract_code
         assert "_cluster_zip" in extract_code
 
 

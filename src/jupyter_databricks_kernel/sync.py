@@ -1,4 +1,4 @@
-"""File synchronization to Databricks DBFS.
+"""File synchronization to Databricks cluster.
 
 This module implements file synchronization. It always excludes the .databricks
 directory. When use_gitignore is enabled, .gitignore patterns are also applied.
@@ -27,6 +27,7 @@ from databricks.sdk import WorkspaceClient
 
 if TYPE_CHECKING:
     from .config import Config
+    from .executor import DatabricksExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,7 @@ class SyncStats:
     skipped_files: int = 0
     total_files: int = 0
     sync_duration: float = 0.0
-    dbfs_path: str = ""
+    cluster_zip_path: str = ""
 
 
 @dataclass
@@ -363,7 +364,7 @@ class FileCache:
 
 
 class FileSync:
-    """Synchronizes local files to Databricks DBFS.
+    """Synchronizes local files to Databricks cluster.
 
     The exclusion logic follows this priority:
     1. .databricks directory (always excluded)
@@ -726,9 +727,9 @@ class FileSync:
     def sync(
         self,
         on_progress: SyncProgressCallback | None = None,
-        executor: Any | None = None,
+        executor: DatabricksExecutor | None = None,
     ) -> SyncStats:
-        """Synchronize files to DBFS.
+        """Synchronize files to Databricks cluster.
 
         Args:
             on_progress: Optional callback for progress updates.
@@ -744,9 +745,6 @@ class FileSync:
         from datetime import timedelta
 
         start_time = time.time()
-
-        dbfs_dir = f"/tmp/jupyter_databricks_kernel/{self.session_id}"
-        dbfs_zip_path = f"{dbfs_dir}/project.zip"
 
         # Get all files and validate sizes (also returns size info for reuse)
         source_path = self._get_source_path()
@@ -877,9 +875,6 @@ os.remove("{tmp_b64_path}")
         if result and result.status != compute.CommandStatus.FINISHED:
             raise RuntimeError(f"Base64 decode failed on cluster: status={result.status}")
 
-        # Update dbfs_path to point to cluster path
-        dbfs_zip_path = cluster_zip_path
-
         # Remove deleted files from cache
         deleted_files = file_cache.get_deleted_files(all_files)
         for rel_path in deleted_files:
@@ -892,7 +887,7 @@ os.remove("{tmp_b64_path}")
 
         # Calculate duration and set path
         stats.sync_duration = time.time() - start_time
-        stats.dbfs_path = dbfs_zip_path
+        stats.cluster_zip_path = cluster_zip_path
 
         # Log statistics
         logger.info(
@@ -905,28 +900,28 @@ os.remove("{tmp_b64_path}")
 
         return stats
 
-    def get_setup_code(self, dbfs_path: str) -> str:
+    def get_setup_code(self, cluster_zip_path: str) -> str:
         """Generate setup code to run on the remote cluster.
 
         This code extracts the zip file and adds the directory to sys.path.
 
         Args:
-            dbfs_path: The DBFS path where the zip was uploaded.
+            cluster_zip_path: The cluster path where the zip was uploaded.
 
         Returns:
             Python code to execute on the remote cluster.
         """
-        steps = self.get_setup_steps(dbfs_path)
+        steps = self.get_setup_steps(cluster_zip_path)
         return "\n".join(code for _, code in steps)
 
-    def get_setup_steps(self, dbfs_path: str) -> list[tuple[str, str]]:
+    def get_setup_steps(self, cluster_zip_path: str) -> list[tuple[str, str]]:
         """Generate setup steps to run on the remote cluster.
 
         Each step is a tuple of (description, code) that can be executed
         individually for progress tracking.
 
         Args:
-            dbfs_path: The DBFS path where the zip was uploaded.
+            cluster_zip_path: The cluster path where the zip was uploaded.
 
         Returns:
             List of (description, code) tuples.
@@ -947,7 +942,7 @@ import os
 import shutil
 
 _extract_dir = "{workspace_extract_dir}"
-_dbfs_zip_path = "dbfs:{dbfs_path}"
+_dbfs_zip_path = "dbfs:{cluster_zip_path}"
 
 if os.path.exists(_extract_dir):
     shutil.rmtree(_extract_dir)
@@ -958,7 +953,7 @@ os.makedirs(_extract_dir, exist_ok=True)
                     "Copying from DBFS",
                     f'''
 _extract_dir = "{workspace_extract_dir}"
-_dbfs_zip_path = "dbfs:{dbfs_path}"
+_dbfs_zip_path = "dbfs:{cluster_zip_path}"
 _local_zip = _extract_dir + "/project.zip"
 dbutils.fs.cp(_dbfs_zip_path, "file:" + _local_zip)
 ''',
@@ -1032,8 +1027,8 @@ except (OSError, PermissionError, FileNotFoundError) as e:
             (
                 "Extracting files",
                 f"""
-# [PoC] Zip already on cluster at {dbfs_path}
-_cluster_zip = "{dbfs_path}"
+# [PoC] Zip already on cluster at {cluster_zip_path}
+_cluster_zip = "{cluster_zip_path}"
 with zipfile.ZipFile(_cluster_zip, 'r') as zf:
     zf.extractall(_extract_dir)
 os.remove(_cluster_zip)

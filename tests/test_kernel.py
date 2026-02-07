@@ -132,7 +132,7 @@ class TestReconnectionHandling:
         """Test that reconnection notifies the user."""
         mock_kernel.executor = MagicMock()
         mock_kernel.file_sync = MagicMock()
-        mock_kernel._last_dbfs_path = "/tmp/test/path"
+        mock_kernel._last_cluster_zip_path = "/tmp/test/path"
 
         mock_kernel._handle_reconnection()
 
@@ -150,7 +150,7 @@ class TestReconnectionHandling:
         mock_kernel.executor.execute.return_value = ExecutionResult(status="ok")
         mock_kernel.file_sync = MagicMock()
         mock_kernel.file_sync.get_setup_code.return_value = "setup_code"
-        mock_kernel._last_dbfs_path = "/tmp/test/path"
+        mock_kernel._last_cluster_zip_path = "/tmp/test/path"
 
         mock_kernel._handle_reconnection()
 
@@ -171,7 +171,7 @@ class TestReconnectionHandling:
         )
         mock_kernel.file_sync = MagicMock()
         mock_kernel.file_sync.get_setup_code.return_value = "setup_code"
-        mock_kernel._last_dbfs_path = "/tmp/test/path"
+        mock_kernel._last_cluster_zip_path = "/tmp/test/path"
 
         mock_kernel._handle_reconnection()
 
@@ -188,7 +188,7 @@ class TestReconnectionHandling:
         mock_kernel.executor.execute.side_effect = Exception("Network error")
         mock_kernel.file_sync = MagicMock()
         mock_kernel.file_sync.get_setup_code.return_value = "setup_code"
-        mock_kernel._last_dbfs_path = "/tmp/test/path"
+        mock_kernel._last_cluster_zip_path = "/tmp/test/path"
 
         # Should not raise
         mock_kernel._handle_reconnection()
@@ -204,7 +204,7 @@ class TestReconnectionHandling:
         """Test reconnection when no sync path exists."""
         mock_kernel.executor = MagicMock()
         mock_kernel.file_sync = MagicMock()
-        mock_kernel._last_dbfs_path = None
+        mock_kernel._last_cluster_zip_path = None
 
         # Should not raise
         mock_kernel._handle_reconnection()

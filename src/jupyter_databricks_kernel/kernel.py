@@ -44,7 +44,7 @@ class DatabricksKernel(Kernel):
         self.executor: DatabricksExecutor | None = None
         self.file_sync: FileSync | None = None
         self._initialized = False
-        self._last_dbfs_path: str | None = None
+        self._last_cluster_zip_path: str | None = None
         self._spinner_index = 0
         self._progress_display_id: str | None = None
         self._driver_logs_url: str | None = None
@@ -214,10 +214,10 @@ class DatabricksKernel(Kernel):
             # Upload files with progress callback
             # IMPORTANT: Pass executor to share execution context with setup steps
             stats = self.file_sync.sync(on_progress=sync_progress, executor=self.executor)
-            self._last_dbfs_path = stats.dbfs_path
+            self._last_cluster_zip_path = stats.cluster_zip_path
 
             # Execute setup steps on remote with progress
-            setup_steps = self.file_sync.get_setup_steps(stats.dbfs_path)
+            setup_steps = self.file_sync.get_setup_steps(stats.cluster_zip_path)
             for i, (description, code) in enumerate(setup_steps):
                 step_num = 5 + i  # Steps 5-8
                 result = self._run_with_spinner(
@@ -272,9 +272,9 @@ class DatabricksKernel(Kernel):
         )
 
         # Re-run setup code if we have synced files before
-        if self.file_sync and self._last_dbfs_path and self.executor:
+        if self.file_sync and self._last_cluster_zip_path and self.executor:
             try:
-                setup_code = self.file_sync.get_setup_code(self._last_dbfs_path)
+                setup_code = self.file_sync.get_setup_code(self._last_cluster_zip_path)
                 result = self.executor.execute(setup_code, allow_reconnect=False)
                 if result.status != "ok":
                     err = result.error
@@ -677,6 +677,6 @@ class DatabricksKernel(Kernel):
             self.executor = None
 
         self._initialized = False
-        self._last_dbfs_path = None
+        self._last_cluster_zip_path = None
         logger.debug("Kernel shutdown complete")
         return {"status": "ok", "restart": restart}
