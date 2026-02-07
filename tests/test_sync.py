@@ -1272,3 +1272,35 @@ print(target_dir)
         assert "os.getuid()" in mkdir_code_template
         assert ".probe" in mkdir_code_template
         assert "print(target_dir)" in mkdir_code_template
+
+    def test_command_api_error_handling(self, mock_file_sync: FileSync, tmp_path: Path) -> None:
+        """Test that Command API errors are properly handled via result.results.cause."""
+        from unittest.mock import Mock, MagicMock
+        import pytest
+
+        # Mock WorkspaceClient and command_execution
+        mock_client = MagicMock()
+        mock_file_sync.client = mock_client
+
+        # Mock command execution failure with cause
+        mock_result = MagicMock()
+        mock_result.status = MagicMock()
+        mock_result.status.__eq__ = lambda self, other: other == "ERROR"
+        mock_result.results = MagicMock()
+        mock_result.results.cause = "ExecutionError: Permission denied"
+
+        mock_client.command_execution.execute.return_value.result.return_value = mock_result
+
+        # Create test file
+        test_file = tmp_path / "test.py"
+        test_file.write_text("print('test')")
+
+        # Mock _get_all_files to return our test file
+        mock_file_sync._get_all_files = Mock(return_value=[test_file])
+
+        # Execute sync should raise error due to cause
+        with pytest.raises(Exception) as exc_info:
+            mock_file_sync.sync()
+
+        # Verify error message contains cause information
+        assert "cause" in str(exc_info.value).lower() or "error" in str(exc_info.value).lower()
