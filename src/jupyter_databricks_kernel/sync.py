@@ -1,4 +1,4 @@
-"""File synchronization to Databricks DBFS.
+"""File synchronization to Databricks cluster.
 
 This module implements file synchronization. It always excludes the .databricks
 directory. When use_gitignore is enabled, .gitignore patterns are also applied.
@@ -27,6 +27,7 @@ from databricks.sdk import WorkspaceClient
 
 if TYPE_CHECKING:
     from .config import Config
+    from .executor import DatabricksExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,7 @@ class SyncStats:
     skipped_files: int = 0
     total_files: int = 0
     sync_duration: float = 0.0
-    dbfs_path: str = ""
+    cluster_zip_path: str = ""
 
 
 @dataclass
@@ -363,7 +364,7 @@ class FileCache:
 
 
 class FileSync:
-    """Synchronizes local files to Databricks DBFS.
+    """Synchronizes local files to Databricks cluster.
 
     The exclusion logic follows this priority:
     1. .databricks directory (always excluded)
@@ -385,14 +386,20 @@ class FileSync:
             client: Optional WorkspaceClient instance for dependency injection.
                 If not provided, a client will be created lazily when needed.
         """
+        import re
+
         self.config = config
         self.client = client
+        # Validate session_id format to prevent path traversal
+        if not re.match(r"^[a-zA-Z0-9_-]+$", session_id):
+            raise ValueError(f"Invalid session_id format: {session_id}")
         self.session_id = session_id
         self._synced = False
         self._user_name: str | None = None
         self._pathspec: pathspec.PathSpec | None = None
         self._pathspec_mtime: float = 0.0
         self._file_cache: FileCache | None = None
+        self._command_context_id: str | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
         """Ensure the WorkspaceClient is initialized.
@@ -427,13 +434,22 @@ class FileSync:
     def _get_user_name(self) -> str:
         """Get the current user's email/username (sanitized for path safety).
 
+        For service principals, user_name may not exist. Falls back to
+        application_id, display_name, or "unknown" in that order.
+
         Returns:
-            The sanitized user's email address.
+            The sanitized user's email address or identifier.
         """
         if self._user_name is None:
             client = self._ensure_client()
             me = client.current_user.me()
-            raw_name = me.user_name or "unknown"
+            # NOTE: Service principals may not have user_name attribute
+            raw_name = (
+                getattr(me, "user_name", None)
+                or getattr(me, "application_id", None)
+                or getattr(me, "display_name", None)
+                or "unknown"
+            )
             self._user_name = self._sanitize_path_component(raw_name)
         return self._user_name
 
@@ -716,11 +732,13 @@ class FileSync:
     def sync(
         self,
         on_progress: SyncProgressCallback | None = None,
+        executor: DatabricksExecutor | None = None,
     ) -> SyncStats:
-        """Synchronize files to DBFS.
+        """Synchronize files to Databricks cluster.
 
         Args:
             on_progress: Optional callback for progress updates.
+            executor: Optional DatabricksExecutor for sharing execution context.
 
         Returns:
             Sync statistics including changed files, sizes, and duration.
@@ -728,10 +746,11 @@ class FileSync:
         Raises:
             FileSizeError: If file size limits are exceeded.
         """
-        start_time = time.time()
+        from datetime import timedelta
 
-        dbfs_dir = f"/tmp/jupyter_databricks_kernel/{self.session_id}"
-        dbfs_zip_path = f"{dbfs_dir}/project.zip"
+        from databricks.sdk.service import compute
+
+        start_time = time.time()
 
         # Get all files and validate sizes (also returns size info for reuse)
         source_path = self._get_source_path()
@@ -755,10 +774,133 @@ class FileSync:
         if on_progress:
             on_progress(f"Uploading ({self._format_size(len(zip_data))})...")
 
-        # Upload to DBFS using SDK's high-level API
+        # Upload via Command API (chunked Base64 transfer)
         client = self._ensure_client()
-        with client.dbfs.open(dbfs_zip_path, write=True, overwrite=True) as f:
-            f.write(zip_data)
+        import base64
+
+        # Encode to Base64
+        zip_b64 = base64.b64encode(zip_data).decode("utf-8")
+
+        # Split into 1MB chunks
+        chunk_size = 1024 * 1024
+        chunks = [
+            zip_b64[i : i + chunk_size] for i in range(0, len(zip_b64), chunk_size)
+        ]
+
+        # Use executor's context if provided, otherwise create minimal execution context
+        context_id: str | None
+        if executor and executor.context_id:
+            context_id = executor.context_id
+        elif self._command_context_id is None:
+            response = client.command_execution.create(
+                cluster_id=self.config.cluster_id,
+                language=compute.Language.PYTHON,
+            ).result()
+            self._command_context_id = response.id if response else None
+            context_id = self._command_context_id
+        else:
+            context_id = self._command_context_id
+
+        if context_id is None:
+            raise RuntimeError("Failed to create or retrieve execution context")
+
+        # Create target directory on cluster with UID fallback
+        target_dir = f"/tmp/jupyter_databricks_kernel_{self.session_id}"
+        mkdir_code = f"""
+import os
+target_dir = "{target_dir}"
+try:
+    os.makedirs(target_dir, mode=0o700, exist_ok=True)
+    probe = os.path.join(target_dir, '.probe')
+    with open(probe, 'w') as f:
+        f.write('ok')
+    os.remove(probe)
+except PermissionError:
+    target_dir = f"{{target_dir}}_{{os.getuid()}}"
+    os.makedirs(target_dir, mode=0o700, exist_ok=True)
+print(target_dir)
+"""
+        result = client.command_execution.execute(
+            cluster_id=self.config.cluster_id,
+            context_id=context_id,
+            language=compute.Language.PYTHON,
+            command=mkdir_code,
+        ).result(timeout=timedelta(minutes=5))
+
+        if result and result.results and result.results.cause:
+            raise RuntimeError(f"Failed to create directory: {result.results.cause}")
+        if result and result.status != compute.CommandStatus.FINISHED:
+            raise RuntimeError(f"Failed to create directory: status={result.status}")
+
+        # Get actual directory path from result
+        # (may have UID suffix if permission error occurred)
+        actual_dir = (
+            result.results.data.strip()
+            if result and result.results and result.results.data
+            else target_dir
+        )
+        # Validate actual_dir format to prevent path traversal
+        if not re.match(r"^/tmp/jupyter_databricks_kernel_[a-zA-Z0-9_-]+$", actual_dir):
+            raise ValueError(f"Invalid directory path from cluster: {actual_dir}")
+        cluster_zip_path = f"{actual_dir}/project.zip"
+        tmp_b64_path = f"{actual_dir}/project.zip.b64"
+
+        # Send chunks via Command API
+        for i, chunk in enumerate(chunks):
+            mode = "w" if i == 0 else "a"
+            # Escape quotes in chunk for Python string
+            chunk_escaped = chunk.replace("\\", "\\\\").replace('"', '\\"')
+            code = f'''
+with open("{tmp_b64_path}", "{mode}") as f:
+    f.write("{chunk_escaped}")
+'''
+            # Execute chunk write
+            result = client.command_execution.execute(
+                cluster_id=self.config.cluster_id,
+                context_id=context_id,
+                language=compute.Language.PYTHON,
+                command=code,
+            ).result(timeout=timedelta(minutes=5))
+
+            if result and result.results and result.results.cause:
+                raise RuntimeError(
+                    f"Chunk {i + 1}/{len(chunks)} failed: {result.results.cause}"
+                )
+            if result and result.status != compute.CommandStatus.FINISHED:
+                raise RuntimeError(
+                    f"Chunk {i + 1}/{len(chunks)} transfer failed: "
+                    f"status={result.status}"
+                )
+
+            if on_progress:
+                on_progress(f"Transferred chunk {i + 1}/{len(chunks)}...")
+
+        # Decode Base64 on cluster
+        decode_code = f'''
+import base64
+import os
+with open("{tmp_b64_path}", "r") as f:
+    b64_data = f.read()
+decoded = base64.b64decode(b64_data)
+with open("{cluster_zip_path}", "wb") as f:
+    f.write(decoded)
+os.remove("{tmp_b64_path}")
+'''
+
+        result = client.command_execution.execute(
+            cluster_id=self.config.cluster_id,
+            context_id=context_id,
+            language=compute.Language.PYTHON,
+            command=decode_code,
+        ).result(timeout=timedelta(minutes=5))
+
+        # Check for errors in result.results.cause (Python exceptions)
+        if result and result.results and result.results.cause:
+            raise RuntimeError(f"Base64 decode failed: {result.results.cause}")
+        if result and result.status != compute.CommandStatus.FINISHED:
+            raise RuntimeError(
+                f"Base64 decode failed on cluster: status={result.status}"
+            )
 
         # Remove deleted files from cache
         deleted_files = file_cache.get_deleted_files(all_files)
@@ -772,7 +914,7 @@ class FileSync:
 
         # Calculate duration and set path
         stats.sync_duration = time.time() - start_time
-        stats.dbfs_path = dbfs_zip_path
+        stats.cluster_zip_path = cluster_zip_path
 
         # Log statistics
         logger.info(
@@ -785,36 +927,93 @@ class FileSync:
 
         return stats
 
-    def get_setup_code(self, dbfs_path: str) -> str:
+    def get_setup_code(self, cluster_zip_path: str) -> str:
         """Generate setup code to run on the remote cluster.
 
         This code extracts the zip file and adds the directory to sys.path.
 
         Args:
-            dbfs_path: The DBFS path where the zip was uploaded.
+            cluster_zip_path: The cluster path where the zip was uploaded.
 
         Returns:
             Python code to execute on the remote cluster.
         """
-        steps = self.get_setup_steps(dbfs_path)
+        steps = self.get_setup_steps(cluster_zip_path)
         return "\n".join(code for _, code in steps)
 
-    def get_setup_steps(self, dbfs_path: str) -> list[tuple[str, str]]:
+    def get_setup_steps(self, cluster_zip_path: str) -> list[tuple[str, str]]:
         """Generate setup steps to run on the remote cluster.
 
         Each step is a tuple of (description, code) that can be executed
         individually for progress tracking.
 
         Args:
-            dbfs_path: The DBFS path where the zip was uploaded.
+            cluster_zip_path: The cluster path where the zip was uploaded.
 
         Returns:
             List of (description, code) tuples.
         """
-        # Use /Workspace/Users/{email}/ which is allowed on Shared clusters
+        # Check if custom workspace_extract_dir is configured
+        if self.config.sync.workspace_extract_dir:
+            workspace_extract_dir = self.config.sync.workspace_extract_dir
+            # Use custom path directly without fallback
+            return [
+                (
+                    "Preparing directory",
+                    f'''
+import sys
+import zipfile
+import os
+import shutil
+
+_extract_dir = "{workspace_extract_dir}"
+_cluster_zip_path = "{cluster_zip_path}"
+
+if os.path.exists(_extract_dir):
+    shutil.rmtree(_extract_dir)
+os.makedirs(_extract_dir, mode=0o700, exist_ok=True)
+''',
+                ),
+                (
+                    "Copying from cluster",
+                    f'''
+_extract_dir = "{workspace_extract_dir}"
+_cluster_zip_path = "{cluster_zip_path}"
+_local_zip = _extract_dir + "/project.zip"
+shutil.copy(_cluster_zip_path, _local_zip)
+''',
+                ),
+                (
+                    "Extracting files",
+                    f'''
+_extract_dir = "{workspace_extract_dir}"
+_local_zip = _extract_dir + "/project.zip"
+with zipfile.ZipFile(_local_zip, 'r') as zf:
+    zf.extractall(_extract_dir)
+os.remove(_local_zip)
+''',
+                ),
+                (
+                    "Configuring paths",
+                    f'''
+_extract_dir = "{workspace_extract_dir}"
+if _extract_dir not in sys.path:
+    sys.path.insert(0, _extract_dir)
+os.chdir(_extract_dir)
+del _extract_dir, _cluster_zip_path, _local_zip
+''',
+                ),
+            ]
+
+        # Use intelligent fallback: try /Workspace/Users/ first,
+        # fallback to /tmp/workspace
         user_name = self._get_user_name()
         workspace_extract_dir = (
             f"/Workspace/Users/{user_name}/jupyter_databricks_kernel/{self.session_id}"
+        )
+        # NOTE: Use /workspace suffix to avoid confusion with zip path
+        fallback_extract_dir = (
+            f"/tmp/jupyter_databricks_kernel_{self.session_id}/workspace"
         )
 
         return [
@@ -825,48 +1024,60 @@ import sys
 import zipfile
 import os
 import shutil
+import logging
 
-_extract_dir = "{workspace_extract_dir}"
-_dbfs_zip_path = "dbfs:{dbfs_path}"
+_logger = logging.getLogger("jupyter_databricks_kernel")
 
-if os.path.exists(_extract_dir):
-    shutil.rmtree(_extract_dir)
-os.makedirs(_extract_dir, exist_ok=True)
-''',
-            ),
-            (
-                "Copying from DBFS",
-                f'''
-_extract_dir = "{workspace_extract_dir}"
-_dbfs_zip_path = "dbfs:{dbfs_path}"
-_local_zip = _extract_dir + "/project.zip"
-dbutils.fs.cp(_dbfs_zip_path, "file:" + _local_zip)
+# Try /Workspace/Users/ first, fallback to /tmp/workspace if it fails
+_primary_dir = "{workspace_extract_dir}"
+_fallback_dir = "{fallback_extract_dir}"
+
+try:
+    if os.path.exists(_primary_dir):
+        shutil.rmtree(_primary_dir)
+    os.makedirs(_primary_dir, exist_ok=True)
+    _extract_dir = _primary_dir
+except (OSError, PermissionError, FileNotFoundError) as e:
+    # Fallback to /tmp/workspace for service principals or permission issues
+    _logger.info(
+        f"Failed to create {{_primary_dir}}: {{e.__class__.__name__}}: {{e}}. "
+        f"Falling back to {{_fallback_dir}}"
+    )
+    if os.path.exists(_fallback_dir):
+        shutil.rmtree(_fallback_dir)
+    os.makedirs(_fallback_dir, exist_ok=True)
+    _extract_dir = _fallback_dir
 ''',
             ),
             (
                 "Extracting files",
-                f'''
-_extract_dir = "{workspace_extract_dir}"
-_local_zip = _extract_dir + "/project.zip"
-with zipfile.ZipFile(_local_zip, 'r') as zf:
+                f"""
+# Zip is already on cluster at {cluster_zip_path}
+_cluster_zip = "{cluster_zip_path}"
+with zipfile.ZipFile(_cluster_zip, 'r') as zf:
     zf.extractall(_extract_dir)
-os.remove(_local_zip)
-''',
+# NOTE: Keep zip file for potential reconnection scenarios
+""",
             ),
             (
                 "Configuring paths",
-                f'''
-_extract_dir = "{workspace_extract_dir}"
+                """
 if _extract_dir not in sys.path:
     sys.path.insert(0, _extract_dir)
 os.chdir(_extract_dir)
-del _extract_dir, _dbfs_zip_path, _local_zip
-''',
+del _extract_dir, _primary_dir, _fallback_dir, _logger
+""",
             ),
         ]
 
     def cleanup(self) -> None:
-        """Clean up DBFS and Workspace files."""
+        """Clean up DBFS and Workspace files.
+
+        Note: This method cleans up DBFS and Workspace paths. Local filesystem
+        paths (like /tmp/ on the cluster) are not cleaned up as they are
+        inaccessible from the kernel side and typically get cleaned up
+        automatically or overwritten in subsequent sessions.
+        """
         if not self._synced:
             return
 
@@ -878,7 +1089,8 @@ del _extract_dir, _dbfs_zip_path, _local_zip
         except Exception as e:
             logger.debug("DBFS cleanup error (ignored): %s", e)
 
-        # Also clean up Workspace directory if user_name is known
+        # Clean up Workspace directory if user_name is known
+        # This handles the primary path for regular users
         if self._user_name is not None:
             workspace_dir = (
                 f"/Workspace/Users/{self._user_name}"
@@ -889,3 +1101,22 @@ del _extract_dir, _dbfs_zip_path, _local_zip
                 client.workspace.delete(workspace_dir, recursive=True)
             except Exception as e:
                 logger.debug("Workspace cleanup error (ignored): %s", e)
+
+        # Clean up self-managed command execution context
+        if self._command_context_id and self.config.cluster_id:
+            try:
+                client = self._ensure_client()
+                client.command_execution.destroy(
+                    cluster_id=self.config.cluster_id,
+                    context_id=self._command_context_id,
+                )
+            except Exception as e:
+                logger.debug("Context cleanup error (ignored): %s", e)
+            self._command_context_id = None
+
+        # NOTE: Local filesystem paths used by Command API transfer
+        # (e.g., /tmp/jupyter_databricks_kernel_{session_id}/)
+        # are not cleaned up here as they require an active
+        # execution context. These should be cleaned up via Command API execution
+        # when the executor context is available. Files in /tmp/ are typically
+        # cleaned up automatically by the cluster or overwritten in subsequent sessions.

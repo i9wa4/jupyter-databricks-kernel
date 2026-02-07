@@ -15,10 +15,13 @@ install:  ## Install mise tools
 	mise install
 
 sync:  ## Sync Python dependencies with uv
-	mise exec -- uv sync
+	mise exec -- uv sync --frozen
 
 test:  ## Run tests
 	mise exec -- uv run pytest
 
 jupyter:  ## Start JupyterLab
-	mise exec -- uv run jupyter lab
+	mise exec -- uv run jupyter-lab
+
+jupyter-debug:  ## Start JupyterLab in debug mode
+	mise exec -- uv run jupyter-lab --debug
