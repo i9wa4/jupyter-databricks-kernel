@@ -22,7 +22,8 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 ## 2. Requirements
 
 - Python 3.11 or later
-- Databricks workspace with authentication configured (supports Personal Access Token, OAuth M2M with Service Principal, etc.)
+- Databricks workspace with authentication configured (supports Personal Access
+  Token, OAuth M2M with Service Principal, etc.)
 - Classic all-purpose cluster
 
 ## 3. Quick Start
