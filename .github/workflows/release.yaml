@@ -75,11 +75,3 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
           target_commitish: ${{ github.event_name == 'workflow_dispatch' && 'main' || '' }}
           generate_release_notes: true
-
-  publish:
-    needs: release
-    if: github.event_name == 'workflow_dispatch'
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/publish.yaml
