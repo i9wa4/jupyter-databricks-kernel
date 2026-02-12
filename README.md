@@ -12,12 +12,18 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 ## 1. Features
 
 - Execute Python code entirely on Databricks clusters
-- Works with VS Code, JupyterLab, and other Jupyter frontends
+  - Works with VS Code, JupyterLab, and other Jupyter frontends
+  - CLI execution support with `jupyter execute` command
+- Automatic file synchronization to Databricks workspace
+  - Syncs your local project files to the remote cluster before execution
+  - Respects `.gitignore` patterns and configurable exclude rules
+  - Configurable size limits to prevent syncing large files
 
 ## 2. Requirements
 
 - Python 3.11 or later
-- Databricks workspace with Personal Access Token
+- Databricks workspace with authentication configured (supports Personal Access
+  Token, OAuth M2M with Service Principal, etc.)
 - Classic all-purpose cluster
 
 ## 3. Quick Start

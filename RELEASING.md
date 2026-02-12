@@ -1,11 +1,11 @@
 # Releasing
 
-## Prerequisites
+## 1. Prerequisites
 
 - PyPI Trusted Publisher configured
 - Write access to repository
 
-## Version Management
+## 2. Version Management
 
 This project uses [hatch-vcs](https://github.com/ofek/hatch-vcs) for automatic
 version management. The package version is derived from git tags, so there is
@@ -14,7 +14,7 @@ no need to manually update `pyproject.toml`.
 - Tag format: `vX.Y.Z` (e.g., `v0.2.0`)
 - Package version: `X.Y.Z` (e.g., `0.2.0`)
 
-## Release Process
+## 3. Release Process
 
 1. Create a tag
 
@@ -28,7 +28,7 @@ no need to manually update `pyproject.toml`.
    git push origin main --tags
    ```
 
-## What Happens Automatically
+## 4. What Happens Automatically
 
 When a tag matching `v*.*.*` is pushed, the Release workflow automatically:
 
@@ -36,7 +36,7 @@ When a tag matching `v*.*.*` is pushed, the Release workflow automatically:
 2. Builds the package using `uv build`
 3. Publishes to PyPI via Trusted Publishers
 
-## PyPI Trusted Publisher Setup
+## 5. PyPI Trusted Publisher Setup
 
 Configure at <https://pypi.org/manage/account/publishing/>
 
