@@ -1,35 +1,46 @@
 # Contributing to jupyter-databricks-kernel
 
-Thank you for your interest in contributing to jupyter-databricks-kernel!
+Thank you for your interest in contributing to
+jupyter-databricks-kernel!
 
 ## 1. Development Setup
 
 ### 1.1. Prerequisites
 
 - Python 3.11 or later
-- [mise](https://mise.jdx.dev/) for tool version management
+- [uv](https://docs.astral.sh/uv/) for dependency management
+- [Nix](https://nixos.org/) (recommended, for pre-commit hooks)
 
-### 1.2. Installation
+### 1.2. With Nix (recommended)
 
 ```bash
-# Install mise
-curl https://mise.run | sh
-
-# Install mise-managed tools
-make install
-
-# Sync Python dependencies
-make sync
+nix develop
 ```
 
-### 1.3. Available Commands
+This installs all tools, syncs dependencies, and sets up
+pre-commit hooks automatically.
 
-| Command        | Description                      |
-| ---------      | -------------                    |
-| `make install` | Install mise tools               |
-| `make sync`    | Sync Python dependencies with uv |
-| `make test`    | Run tests                        |
-| `make jupyter` | Start JupyterLab                 |
+### 1.3. Without Nix
+
+```bash
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Sync Python dependencies
+uv sync
+
+# Run tests
+uv run pytest
+```
+
+### 1.4. Available Commands
+
+| Command              | Description          |
+| -------------------- | -------------------- |
+| `uv sync`            | Sync dependencies    |
+| `uv run pytest`      | Run tests            |
+| `uv run mypy src`    | Type check           |
+| `uv run jupyter-lab` | Start JupyterLab     |
 
 ## 2. Project Structure
 
@@ -41,12 +52,12 @@ src/jupyter_databricks_kernel/
 └── config.py      # Configuration loading and validation
 ```
 
-| Module      | Description                                                 |
-| --------    | -------------                                               |
-| kernel.py   | Kernel lifecycle, file sync coordination, result formatting |
-| executor.py | Command Execution API, context management, reconnection     |
-| sync.py     | File collection, hash-based change detection, DBFS upload   |
-| config.py   | Environment variables, YAML config, validation              |
+| Module      | Description                                             |
+| ----------- | ------------------------------------------------------- |
+| kernel.py   | Kernel lifecycle, file sync, result formatting          |
+| executor.py | Command Execution API, context management, reconnection |
+| sync.py     | File collection, hash-based change detection, upload    |
+| config.py   | Environment variables, YAML config, validation          |
 
 ## 3. Code Style
 
@@ -54,23 +65,21 @@ This project uses automated tools for code quality.
 
 ### 3.1. Linting and Formatting
 
-We use [Ruff](https://docs.astral.sh/ruff/) for linting and formatting:
+We use [Ruff](https://docs.astral.sh/ruff/) for linting and
+formatting:
 
 ```bash
-# Run all pre-commit hooks
-mise exec -- pre-commit run --all-files
-
-# Run ruff directly
-mise exec -- uv run ruff check src/
-mise exec -- uv run ruff format src/
+uv run ruff check src/
+uv run ruff format src/
 ```
 
 ### 3.2. Type Checking
 
-We use [mypy](https://mypy.readthedocs.io/) for static type checking:
+We use [mypy](https://mypy.readthedocs.io/) for static type
+checking:
 
 ```bash
-mise exec -- uv run mypy src/
+uv run mypy src/
 ```
 
 ### 3.3. Style Guidelines
@@ -86,13 +95,13 @@ mise exec -- uv run mypy src/
 
 ```bash
 # Run all tests
-make test
+uv run pytest
 
 # Run with coverage
-mise exec -- uv run pytest --cov=jupyter_databricks_kernel
+uv run pytest --cov=jupyter_databricks_kernel
 
 # Run specific test file
-mise exec -- uv run pytest tests/test_config.py -v
+uv run pytest tests/test_config.py -v
 ```
 
 ### 4.2. Writing Tests
@@ -109,7 +118,7 @@ During development, you may want to test the kernel locally:
 
 ```bash
 # Install the kernel in development mode
-mise exec -- uv run python -m jupyter_databricks_kernel.install
+uv run python -m jupyter_databricks_kernel.install
 
 # Verify installation
 jupyter kernelspec list
@@ -123,7 +132,8 @@ jupyter kernelspec uninstall databricks-session
 
 ## 6. Using Development Version in Another Project
 
-When developing features, you may want to test the kernel in a separate project.
+When developing features, you may want to test the kernel in a
+separate project.
 
 ### 6.1. With uv (Recommended)
 
@@ -152,8 +162,8 @@ To update after making changes to the kernel:
 uv sync  # Re-syncs the editable install
 ```
 
-**Note**: You must restart the Jupyter kernel after updating to load the new
-code.
+**Note**: You must restart the Jupyter kernel after updating to
+load the new code.
 
 ### 6.2. With pip
 
@@ -161,25 +171,6 @@ Install in editable mode:
 
 ```bash
 pip install -e /path/to/jupyter-databricks-kernel
-```
-
-Or install directly from GitHub:
-
-```bash
-# From a specific branch
-pip install git+https://github.com/i9wa4/jupyter-databricks-kernel.git@branch-name
-
-# From main
-pip install git+https://github.com/i9wa4/jupyter-databricks-kernel.git
-```
-
-To update:
-
-```bash
-# For editable install, just restart the kernel
-
-# For GitHub install
-pip install --upgrade git+https://github.com/i9wa4/jupyter-databricks-kernel.git@branch-name
 ```
 
 ### 6.3. Verifying the Version
@@ -191,14 +182,15 @@ uv run python -c "import jupyter_databricks_kernel; \
   print(jupyter_databricks_kernel.__version__)"
 ```
 
-Development versions will show a version like `1.1.3.dev3+gbe2d703f8.d20251212`.
+Development versions will show a version like
+`1.1.3.dev3+gbe2d703f8.d20251212`.
 
 ## 7. Pull Request Guidelines
 
 ### 7.1. Before Submitting
 
-- Run `mise exec -- pre-commit run --all-files` and fix any issues
-- Run `make test` and ensure all tests pass
+- Run `uv run pytest` and ensure all tests pass
+- Run `uv run ruff check src/` and fix any issues
 - Update documentation if needed
 - Add tests for new functionality
 
@@ -236,5 +228,5 @@ When requesting features, please include:
 
 ## 9. License
 
-By contributing to this project, you agree that your contributions will be
-licensed under the Apache License 2.0.
+By contributing to this project, you agree that your
+contributions will be licensed under the Apache License 2.0.

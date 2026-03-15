@@ -1,4 +1,4 @@
-name: CI
+name: ci
 run-name: ${{ github.event_name }} on ${{ github.ref_name }} by @${{ github.actor }}
 
 on:
@@ -27,7 +27,7 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: read
 
@@ -35,33 +35,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Install mise
-        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+      - name: Install Nix
+        uses: cachix/install-nix-action@19effe9fe722874e6d46dd7182e4b8b7a43c4a99 # v31.10.0
         with:
-          cache: true
+          github_access_token: ${{ github.token }}
 
-      - name: Cache
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          path: |
-            ~/.cache/pre-commit
-            ~/.cache/uv
-            .venv
-          key: |
-            cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml', 'uv.lock') }}
-          restore-keys: |
-            cache-${{ runner.os }}-${{ runner.arch }}-
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
 
-      - name: Run pre-commit
-        run: |
-          mise exec -- pre-commit run --all-files
-          mise exec -- pre-commit run gitleaks-history --all-files --hook-stage manual
+      - name: Run nix flake check
+        run: nix flake check --print-build-logs
+
+      - name: Run gitleaks history scan
+        run: nix develop .#ci --command gitleaks detect --verbose --redact
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: read
     strategy:
@@ -75,25 +70,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install mise
-        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
-        with:
-          cache: true
-
-      - name: Cache
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
-        with:
-          path: |
-            ~/.cache/uv
-            .venv
-          key: |
-            cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            cache-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.3.0
 
       - name: Run tests
-        run: |
-          mise exec -- uv run --python ${{ matrix.python-version }} pytest -m "not integration"
+        run: uv run --python ${{ matrix.python-version }} pytest -m "not integration"
 
   ci:
     needs: [lint, test]

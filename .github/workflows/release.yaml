@@ -44,13 +44,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install mise
-        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.3.0
         with:
-          cache: false
+          enable-cache: false
 
       - name: Build package
-        run: mise exec -- uv build
+        run: uv build
 
       - name: Upload artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0

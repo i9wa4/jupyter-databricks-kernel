@@ -211,3 +211,9 @@ __marimo__/
 
 # hatch-vcs generated version file
 src/jupyter_databricks_kernel/_version.py
+
+# Nix
+.direnv/
+/result
+/result-*
+.pre-commit-config.yaml
