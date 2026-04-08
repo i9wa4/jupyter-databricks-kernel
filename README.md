@@ -37,10 +37,11 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 
    Install options:
 
-   | Option | Description | | ------ | ----------- | | (default) | Install to
-   current venv (`sys.prefix`) | | `--user` | Install to user directory
-   (`~/.local/share/jupyter/kernels/`) | | `--prefix PATH` | Install to custom
-   path |
+   | Option          | Description                                              |
+   | --------------- | -------------------------------------------------------- |
+   | (default)       | Install to current venv (`sys.prefix`)                   |
+   | `--user`        | Install to user directory (`~/.local/share/jupyter/kernels/`) |
+   | `--prefix PATH` | Install to custom path                                   |
 
 2. Configure authentication and cluster:
 
