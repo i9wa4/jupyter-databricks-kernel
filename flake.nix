@@ -40,6 +40,7 @@
             [MD013]
             code-blocks = false
             headings = false
+            tables = false
             reflow = true
           '';
         in
