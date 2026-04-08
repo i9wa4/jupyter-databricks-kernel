@@ -37,11 +37,11 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 
    Install options:
 
-   | Option          | Description                                              |
-   | --------------- | -------------------------------------------------------- |
-   | (default)       | Install to current venv (`sys.prefix`)                   |
-   | `--user`        | Install to user directory (`~/.local/share/jupyter/kernels/`) |
-   | `--prefix PATH` | Install to custom path                                   |
+   | Option | Description |
+   | --- | --- |
+   | (default) | Install to current venv (`sys.prefix`) |
+   | `--user` | Install to user site (`~/.local/share/jupyter/kernels/`) |
+   | `--prefix PATH` | Install to custom path |
 
 2. Configure authentication and cluster:
 
@@ -73,7 +73,7 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 
    **VS Code:**
 
-   1. Install the [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter)
+   1. Install the [Jupyter extension][vscode-jupyter]
    2. Open a `.ipynb` file
    3. Click "Select Kernel" and choose "Databricks"
 
@@ -139,6 +139,7 @@ use_gitignore = true
 | `sync.use_gitignore`    | Respect .gitignore patterns        | `true`   |
 
 [sdk-auth]: https://docs.databricks.com/en/dev-tools/sdk-python.html#authentication
+[vscode-jupyter]: https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter
 
 ## 5. CLI Execution
 
