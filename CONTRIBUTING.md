@@ -48,7 +48,7 @@ uv run pytest
 src/jupyter_databricks_kernel/
 ├── kernel.py      # Jupyter kernel implementation
 ├── executor.py    # Databricks execution context management
-├── sync.py        # File synchronization to DBFS
+├── sync.py        # File synchronization via Command API Base64 transfer
 └── config.py      # Configuration loading and validation
 ```
 
@@ -56,7 +56,7 @@ src/jupyter_databricks_kernel/
 | ----------- | ------------------------------------------------------- |
 | kernel.py   | Kernel lifecycle, file sync, result formatting          |
 | executor.py | Command Execution API, context management, reconnection |
-| sync.py     | File collection, hash-based change detection, upload    |
+| sync.py     | File collection, hash-based change detection, Command API transfer |
 | config.py   | Environment variables, YAML config, validation          |
 
 ## 3. Code Style
