@@ -175,15 +175,43 @@ If the cluster is stopped, kernel startup may take 5-6 minutes. Increase
 jupyter execute notebook.ipynb --kernel_name=databricks --startup_timeout=600
 ```
 
-## 6. Known Limitations
+## 6. Papermill Integration
+
+[papermill](https://papermill.readthedocs.io/) supports parameter injection for
+notebook pipelines. Use it with this kernel for parameterized remote execution
+on Databricks clusters.
+
+Install papermill:
+
+```bash
+pip install papermill
+```
+
+Run a notebook with parameter injection:
+
+```bash
+papermill input.ipynb output.ipynb --kernel databricks -p param1 value1 -p param2 value2
+```
+
+Do NOT use the `--inplace` flag with papermill. Papermill is designed to
+produce a new output notebook with injected parameters and captured cell
+outputs; `--inplace` overwrites the source notebook and defeats this purpose.
+
+If the cluster is stopped, increase the startup timeout:
+
+```bash
+papermill input.ipynb output.ipynb --kernel databricks --start_timeout 600 -p param1 value1
+```
+
+## 7. Known Limitations
 
 - Serverless compute is not supported (Command Execution API limitation)
 - `input()` and interactive prompts do not work
 - Interactive widgets (ipywidgets) are not supported
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
-### 7.1. Kernel feels slow
+### 8.1. Kernel feels slow
 
 File sync may be uploading unnecessary files. Check your sync settings:
 
@@ -220,10 +248,10 @@ File sync may be uploading unnecessary files. Check your sync settings:
    enabled = false
    ```
 
-## 8. Development
+## 9. Development
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and guidelines.
 
-## 9. License
+## 10. License
 
 Apache License 2.0
