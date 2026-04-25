@@ -14,8 +14,9 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 - Execute Python code entirely on Databricks clusters
   - Works with VS Code, JupyterLab, and other Jupyter frontends
   - CLI execution support with `jupyter execute` command
-- Automatic file synchronization to Databricks workspace
-  - Syncs your local project files to the remote cluster before execution
+- Automatic file synchronization to the Databricks cluster driver node
+  - Syncs your local project files to the cluster driver node before each
+    execution
   - Respects `.gitignore` patterns and configurable exclude rules
   - Configurable size limits to prevent syncing large files
 
@@ -62,6 +63,10 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
    # Authentication (if not using ~/.databrickscfg)
    export DATABRICKS_HOST=https://your-workspace.cloud.databricks.com
    export DATABRICKS_TOKEN=your-personal-access-token
+
+   # Service Principal authentication (alternative to PAT)
+   export DATABRICKS_CLIENT_ID=your-client-id
+   export DATABRICKS_CLIENT_SECRET=your-client-secret
 
    # Use specific profile from ~/.databrickscfg (optional)
    export DATABRICKS_CONFIG_PROFILE=your-profile-name
@@ -129,14 +134,25 @@ max_file_size_mb = 10.0
 use_gitignore = true
 ```
 
-| Option                  | Description                        | Default  |
-| ------                  | -----------                        | -------  |
-| `sync.enabled`          | Enable file synchronization        | `true`   |
-| `sync.source`           | Source directory to sync           | `"."`    |
-| `sync.exclude`          | Additional exclude patterns        | `[]`     |
-| `sync.max_size_mb`      | Maximum total project size in MB   | No limit |
-| `sync.max_file_size_mb` | Maximum individual file size in MB | No limit |
-| `sync.use_gitignore`    | Respect .gitignore patterns        | `true`   |
+| Option                          | Description                            | Default       |
+| ------------------------------- | -------------------------------------- | ------------- |
+| `sync.enabled`                  | Enable file synchronization            | `true`        |
+| `sync.source`                   | Source directory to sync               | `"."`         |
+| `sync.exclude`                  | Additional exclude patterns            | `[]`          |
+| `sync.max_size_mb`              | Maximum total project size in MB       | No limit      |
+| `sync.max_file_size_mb`         | Maximum individual file size in MB     | No limit      |
+| `sync.use_gitignore`            | Respect .gitignore patterns            | `true`        |
+| `sync.workspace_extract_dir`    | Custom extraction directory on cluster | `null` (auto) |
+
+The extraction directory can also be set via the
+`JUPYTER_DATABRICKS_KERNEL_EXTRACT_DIR` environment variable, which takes
+priority over `pyproject.toml`.
+
+By default, files are extracted to
+`/Workspace/Users/<your-user>/jupyter_databricks_kernel/<session>/` on the
+cluster driver node. This is a cluster-local path, not the Databricks UI
+Workspace file browser. A fallback path under `/tmp/` is used for service
+principals or when workspace permissions are denied.
 
 [sdk-auth]: https://docs.databricks.com/en/dev-tools/sdk-python.html#authentication
 [vscode-jupyter]: https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter
