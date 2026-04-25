@@ -64,6 +64,10 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
    export DATABRICKS_HOST=https://your-workspace.cloud.databricks.com
    export DATABRICKS_TOKEN=your-personal-access-token
 
+   # Service Principal authentication (alternative to PAT)
+   export DATABRICKS_CLIENT_ID=your-client-id
+   export DATABRICKS_CLIENT_SECRET=your-client-secret
+
    # Use specific profile from ~/.databrickscfg (optional)
    export DATABRICKS_CONFIG_PROFILE=your-profile-name
    ```
