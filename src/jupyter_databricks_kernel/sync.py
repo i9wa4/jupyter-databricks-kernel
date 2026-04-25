@@ -6,6 +6,7 @@ directory. When use_gitignore is enabled, .gitignore patterns are also applied.
 
 from __future__ import annotations
 
+import base64
 import functools
 import hashlib
 import io
@@ -776,16 +777,12 @@ class FileSync:
 
         # Upload via Command API (chunked Base64 transfer)
         client = self._ensure_client()
-        import base64
 
-        # Encode to Base64
-        zip_b64 = base64.b64encode(zip_data).decode("utf-8")
-
-        # Split into 1MB chunks
-        chunk_size = 1024 * 1024
-        chunks = [
-            zip_b64[i : i + chunk_size] for i in range(0, len(zip_b64), chunk_size)
-        ]
+        # 3 × 2^18 bytes per binary chunk → each encodes to exactly 1 MiB of
+        # Base64 with no internal padding, so the cluster can decode each chunk
+        # independently without needing an intermediate .b64 accumulator file.
+        chunk_size_bytes = 786432
+        num_chunks = max(1, (len(zip_data) + chunk_size_bytes - 1) // chunk_size_bytes)
 
         # Use executor's context if provided, otherwise create minimal execution context
         context_id: str | None
@@ -843,18 +840,17 @@ print(target_dir)
         if not re.match(r"^/tmp/jupyter_databricks_kernel_[a-zA-Z0-9_-]+$", actual_dir):
             raise ValueError(f"Invalid directory path from cluster: {actual_dir}")
         cluster_zip_path = f"{actual_dir}/project.zip"
-        tmp_b64_path = f"{actual_dir}/project.zip.b64"
 
-        # Send chunks via Command API
-        for i, chunk in enumerate(chunks):
-            mode = "w" if i == 0 else "a"
-            # Escape quotes in chunk for Python string
-            chunk_escaped = chunk.replace("\\", "\\\\").replace('"', '\\"')
+        # Send chunks via Command API — encode locally, decode directly on cluster
+        for i in range(num_chunks):
+            binary_chunk = zip_data[i * chunk_size_bytes : (i + 1) * chunk_size_bytes]
+            chunk_b64 = base64.b64encode(binary_chunk).decode("ascii")
+            mode = "wb" if i == 0 else "ab"
             code = f'''
-with open("{tmp_b64_path}", "{mode}") as f:
-    f.write("{chunk_escaped}")
+import base64
+with open("{cluster_zip_path}", "{mode}") as f:
+    f.write(base64.b64decode("{chunk_b64}"))
 '''
-            # Execute chunk write
             result = client.command_execution.execute(
                 cluster_id=self.config.cluster_id,
                 context_id=context_id,
@@ -864,43 +860,16 @@ with open("{tmp_b64_path}", "{mode}") as f:
 
             if result and result.results and result.results.cause:
                 raise RuntimeError(
-                    f"Chunk {i + 1}/{len(chunks)} failed: {result.results.cause}"
+                    f"Chunk {i + 1}/{num_chunks} failed: {result.results.cause}"
                 )
             if result and result.status != compute.CommandStatus.FINISHED:
                 raise RuntimeError(
-                    f"Chunk {i + 1}/{len(chunks)} transfer failed: "
+                    f"Chunk {i + 1}/{num_chunks} transfer failed: "
                     f"status={result.status}"
                 )
 
             if on_progress:
-                on_progress(f"Transferred chunk {i + 1}/{len(chunks)}...")
-
-        # Decode Base64 on cluster
-        decode_code = f'''
-import base64
-import os
-with open("{tmp_b64_path}", "r") as f:
-    b64_data = f.read()
-decoded = base64.b64decode(b64_data)
-with open("{cluster_zip_path}", "wb") as f:
-    f.write(decoded)
-os.remove("{tmp_b64_path}")
-'''
-
-        result = client.command_execution.execute(
-            cluster_id=self.config.cluster_id,
-            context_id=context_id,
-            language=compute.Language.PYTHON,
-            command=decode_code,
-        ).result(timeout=timedelta(minutes=5))
-
-        # Check for errors in result.results.cause (Python exceptions)
-        if result and result.results and result.results.cause:
-            raise RuntimeError(f"Base64 decode failed: {result.results.cause}")
-        if result and result.status != compute.CommandStatus.FINISHED:
-            raise RuntimeError(
-                f"Base64 decode failed on cluster: status={result.status}"
-            )
+                on_progress(f"Transferred chunk {i + 1}/{num_chunks}...")
 
         # Remove deleted files from cache
         deleted_files = file_cache.get_deleted_files(all_files)
