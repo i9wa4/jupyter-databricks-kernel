@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import json
 import logging
 import os
 import tomllib
@@ -35,6 +36,7 @@ class Config:
     """Main configuration for the Databricks kernel."""
 
     cluster_id: str | None = None
+    mcp_profile: str | None = None
     sync: SyncConfig = field(default_factory=SyncConfig)
     base_path: Path | None = None
 
@@ -57,13 +59,29 @@ class Config:
         logger.debug("No pyproject.toml found in %s or parent directories", current)
         return None
 
+    @staticmethod
+    def _find_databricks_config_json() -> Path | None:
+        """Find .databricks/config.json in current or parent directories.
+
+        Returns:
+            Path to .databricks/config.json if found, None otherwise.
+        """
+        current = Path.cwd()
+        for directory in [current] + list(current.parents):
+            candidate = directory / ".databricks" / "config.json"
+            if candidate.exists():
+                logger.debug("Found .databricks/config.json at %s", candidate)
+                return candidate
+        return None
+
     @classmethod
     def load(cls, config_path: Path | None = None) -> Config:
         """Load configuration from environment variables and config files.
 
-        Priority order for cluster_id:
-        1. DATABRICKS_CLUSTER_ID environment variable (highest priority)
-        2. ~/.databrickscfg cluster_id (from active profile)
+        Priority order for cluster_id and mcp_profile:
+        1. Environment variables (highest priority)
+        2. ~/.databrickscfg (from active profile)
+        3. .databricks/config.json (project-local, lowest priority)
 
         Sync settings are loaded from pyproject.toml.
 
@@ -77,14 +95,24 @@ class Config:
         logger.debug("Loading configuration")
         config = cls()
 
-        # Load cluster_id from environment variable (highest priority)
+        # Load from environment variables (highest priority)
         config.cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
         if config.cluster_id:
             logger.debug("Cluster ID from environment: %s", config.cluster_id)
 
-        # Load cluster_id from databrickscfg if not set by env var
-        if config.cluster_id is None:
-            config._load_cluster_id_from_databrickscfg()
+        config.mcp_profile = os.environ.get("DATABRICKS_MCP_PROFILE")
+        if config.mcp_profile:
+            logger.debug("MCP profile from environment: %s", config.mcp_profile)
+
+        # Load from databrickscfg if fields not set by env var
+        if config.cluster_id is None or config.mcp_profile is None:
+            config._load_from_databrickscfg()
+
+        # Load from .databricks/config.json if fields still not set
+        if config.cluster_id is None or config.mcp_profile is None:
+            databricks_config = cls._find_databricks_config_json()
+            if databricks_config is not None:
+                config._load_from_databricks_config_json(databricks_config)
 
         # Search for pyproject.toml if not explicitly provided
         if config_path is None:
@@ -104,17 +132,18 @@ class Config:
             )
 
         logger.debug(
-            "Configuration loaded: cluster_id=%s, sync_enabled=%s, base_path=%s",
+            "Configuration loaded: cluster_id=%s, mcp_profile=%s, sync_enabled=%s, base_path=%s",
             config.cluster_id,
+            config.mcp_profile,
             config.sync.enabled,
             config.base_path,
         )
         return config
 
-    def _load_cluster_id_from_databrickscfg(self) -> None:
-        """Load cluster_id from ~/.databrickscfg.
+    def _load_from_databrickscfg(self) -> None:
+        """Load cluster_id and mcp_profile from ~/.databrickscfg.
 
-        Reads cluster_id from the active profile in ~/.databrickscfg.
+        Reads values from the active profile in ~/.databrickscfg.
         Active profile is determined by DATABRICKS_CONFIG_PROFILE
         environment variable, or 'DEFAULT' if not set.
         """
@@ -134,11 +163,49 @@ class Config:
         if profile not in parser:
             return
 
-        if "cluster_id" in parser[profile]:
+        if self.cluster_id is None and "cluster_id" in parser[profile]:
             self.cluster_id = parser[profile]["cluster_id"]
             logger.debug(
                 "Cluster ID from databrickscfg [%s]: %s", profile, self.cluster_id
             )
+
+        if self.mcp_profile is None and "mcp_profile" in parser[profile]:
+            self.mcp_profile = parser[profile]["mcp_profile"]
+            logger.debug(
+                "MCP profile from databrickscfg [%s]: %s", profile, self.mcp_profile
+            )
+
+    def _load_from_databricks_config_json(self, path: Path) -> None:
+        """Load cluster_id and mcp_profile from .databricks/config.json.
+
+        Args:
+            path: Path to .databricks/config.json.
+
+        Raises:
+            ValueError: If config contains workspace_url (intentionally absent
+                from schema; workspace identity must come from mcp_profile).
+        """
+        logger.debug("Loading from %s", path)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("Failed to parse %s: %s", path, e)
+            return
+
+        if "workspace_url" in data:
+            raise ValueError(
+                f"{path} must not contain 'workspace_url'. "
+                "Workspace identity must come from mcp_profile in ~/.databrickscfg."
+            )
+
+        if self.cluster_id is None and "cluster_id" in data:
+            self.cluster_id = data["cluster_id"]
+            logger.debug("Cluster ID from %s: %s", path, self.cluster_id)
+
+        if self.mcp_profile is None and "mcp_profile" in data:
+            self.mcp_profile = data["mcp_profile"]
+            logger.debug("MCP profile from %s: %s", path, self.mcp_profile)
 
     def _load_from_pyproject(self, config_path: Path) -> None:
         """Load sync configuration from pyproject.toml.
