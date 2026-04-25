@@ -915,16 +915,12 @@ class TestGetSetupCode:
     def test_setup_code_includes_chdir(self, mock_config: MagicMock) -> None:
         """Test that setup code sets working directory."""
         file_sync = FileSync(mock_config, "test-session")
-        # Mock _get_user_name to avoid Databricks SDK authentication
-        file_sync._get_user_name = MagicMock(return_value="test@example.com")
         setup_code = file_sync.get_setup_code("/tmp/test.zip")
         assert "os.chdir(_extract_dir)" in setup_code
 
     def test_setup_code_includes_sys_path(self, mock_config: MagicMock) -> None:
         """Test that setup code adds to sys.path."""
         file_sync = FileSync(mock_config, "test-session")
-        # Mock _get_user_name to avoid Databricks SDK authentication
-        file_sync._get_user_name = MagicMock(return_value="test@example.com")
         setup_code = file_sync.get_setup_code("/tmp/test.zip")
         assert "sys.path.insert(0, _extract_dir)" in setup_code
 
@@ -1044,28 +1040,25 @@ class TestGetSourcePathWithBasePath:
 class TestGetSetupSteps:
     """Tests for FileSync.get_setup_steps() method."""
 
-    def test_default_fallback_logic(self, mock_file_sync: FileSync) -> None:
-        """Test that fallback logic is included when no custom path is set."""
+    def test_default_tmp_path(self, mock_file_sync: FileSync) -> None:
+        """Test that single /tmp/jupyter_databricks_kernel/<project>/ path is used."""
         cluster_zip_path = "/tmp/test/project.zip"
         steps = mock_file_sync.get_setup_steps(cluster_zip_path)
 
-        # Should return 3 steps (Command API method: no DBFS copy step)
+        # Should return 3 steps
         assert len(steps) == 3
         assert steps[0][0] == "Preparing directory"
         assert steps[1][0] == "Extracting files"
         assert steps[2][0] == "Configuring paths"
 
-        # Check that first step includes fallback logic
+        # Check single path — no fallback logic
         prepare_code = steps[0][1]
-        assert "_primary_dir" in prepare_code
-        assert "_fallback_dir" in prepare_code
-        assert "/Workspace/Users/" in prepare_code
-        assert "/tmp/jupyter_databricks_kernel_" in prepare_code
-        assert "/workspace" in prepare_code  # Fallback path has /workspace suffix
-        assert "try:" in prepare_code
-        assert "except (OSError, PermissionError, FileNotFoundError)" in prepare_code
-        assert "logging" in prepare_code  # INFO level logging
-        assert "_logger.info" in prepare_code
+        assert "/tmp/jupyter_databricks_kernel/" in prepare_code
+        assert "_primary_dir" not in prepare_code
+        assert "_fallback_dir" not in prepare_code
+        assert "/Workspace/Users/" not in prepare_code
+        assert "try:" not in prepare_code
+        assert "except" not in prepare_code
 
     def test_custom_workspace_extract_dir(self, mock_file_sync: FileSync) -> None:
         """Test that custom workspace_extract_dir is used when configured."""
@@ -1086,14 +1079,16 @@ class TestGetSetupSteps:
         assert "_fallback_dir" not in prepare_code
         assert "try:" not in prepare_code
 
-    def test_session_id_in_paths(self, mock_file_sync: FileSync) -> None:
-        """Test that session ID is included in generated paths."""
+    def test_default_path_is_deterministic(self, mock_file_sync: FileSync) -> None:
+        """Test that default path is deterministic (no session UUID in path)."""
         cluster_zip_path = "/tmp/test/project.zip"
         steps = mock_file_sync.get_setup_steps(cluster_zip_path)
 
         prepare_code = steps[0][1]
-        # Session ID should be in both primary and fallback paths
-        assert "test-session-id" in prepare_code
+        # Session ID must NOT appear in default path — path is project-scoped
+        assert "test-session-id" not in prepare_code
+        # Path must be under /tmp/jupyter_databricks_kernel/
+        assert "/tmp/jupyter_databricks_kernel/" in prepare_code
 
     def test_cluster_zip_path_in_code(self, mock_file_sync: FileSync) -> None:
         """Test that zip path is correctly embedded in generated code."""
@@ -1105,90 +1100,6 @@ class TestGetSetupSteps:
         extract_code = steps[1][1]
         assert cluster_zip_path in extract_code
         assert "_cluster_zip" in extract_code
-
-
-class TestGetUserName:
-    """Tests for FileSync._get_user_name() method with service principal support."""
-
-    def test_regular_user_with_user_name(
-        self, mock_config: MagicMock, mock_workspace_client: MagicMock
-    ) -> None:
-        """Test that user_name is used when available."""
-        file_sync = FileSync(mock_config, "test-session", client=mock_workspace_client)
-
-        # Regular user has user_name
-        mock_workspace_client.current_user.me.return_value.user_name = (
-            "user@example.com"
-        )
-
-        user_name = file_sync._get_user_name()
-        assert user_name == "user@example.com"
-
-    def test_service_principal_with_application_id(
-        self, mock_config: MagicMock, mock_workspace_client: MagicMock
-    ) -> None:
-        """Test that application_id is used when user_name is not available."""
-        file_sync = FileSync(mock_config, "test-session", client=mock_workspace_client)
-
-        # Service principal has application_id but no user_name
-        me_mock = MagicMock()
-        me_mock.user_name = None
-        me_mock.application_id = "12345678-1234-1234-1234-123456789abc"
-        mock_workspace_client.current_user.me.return_value = me_mock
-
-        user_name = file_sync._get_user_name()
-        assert user_name == "12345678-1234-1234-1234-123456789abc"
-
-    def test_service_principal_with_display_name(
-        self, mock_config: MagicMock, mock_workspace_client: MagicMock
-    ) -> None:
-        """Test that display_name is used as fallback."""
-        file_sync = FileSync(mock_config, "test-session", client=mock_workspace_client)
-
-        # Service principal has display_name but no user_name or application_id
-        me_mock = MagicMock()
-        me_mock.user_name = None
-        me_mock.application_id = None
-        me_mock.display_name = "My Service Principal"
-        mock_workspace_client.current_user.me.return_value = me_mock
-
-        user_name = file_sync._get_user_name()
-        assert user_name == "My_Service_Principal"  # Sanitized
-
-    def test_service_principal_no_attributes(
-        self, mock_config: MagicMock, mock_workspace_client: MagicMock
-    ) -> None:
-        """Test that 'unknown' is used when no attributes are available."""
-        file_sync = FileSync(mock_config, "test-session", client=mock_workspace_client)
-
-        # Service principal has no identifying attributes
-        me_mock = MagicMock()
-        me_mock.user_name = None
-        me_mock.application_id = None
-        me_mock.display_name = None
-        mock_workspace_client.current_user.me.return_value = me_mock
-
-        user_name = file_sync._get_user_name()
-        assert user_name == "unknown"
-
-    def test_user_name_cached(
-        self, mock_config: MagicMock, mock_workspace_client: MagicMock
-    ) -> None:
-        """Test that user_name is cached after first call."""
-        file_sync = FileSync(mock_config, "test-session", client=mock_workspace_client)
-
-        mock_workspace_client.current_user.me.return_value.user_name = (
-            "user@example.com"
-        )
-
-        # First call
-        user_name1 = file_sync._get_user_name()
-        # Second call
-        user_name2 = file_sync._get_user_name()
-
-        assert user_name1 == user_name2
-        # me() should be called only once due to caching
-        assert mock_workspace_client.current_user.me.call_count == 1
 
 
 class TestCommandAPITransfer:
