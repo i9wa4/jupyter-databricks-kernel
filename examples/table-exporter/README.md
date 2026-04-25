@@ -8,32 +8,40 @@ with `jupyter-databricks-kernel`.
 ```
 table-exporter/
 ├── .ruff.toml           # Ruff configuration
+├── pyproject.toml       # Project metadata and tool config
 ├── launcher.ipynb       # Skinny wrapper (3 cells only)
 ├── main.py              # Entry point
 ├── common/
 │   ├── __init__.py
-│   ├── params.py        # Parameter handling
+│   ├── params.py        # Parameter handling utilities
 │   └── validator.py     # Validation utilities
 └── processors/
     ├── __init__.py
-    └── exporter.py      # Business logic (uses dbutils/Spark)
+    └── exporter.py      # Business logic (uses Spark)
 ```
+
+## How the Notebook Works
+
+`launcher.ipynb` has exactly 3 cells:
+
+1. **Widget definitions** — `dbutils.widgets.text()` calls that declare each
+   parameter with a default. Databricks Jobs override these via `base_parameters`
+   at runtime; locally you can fill them in the widget UI.
+2. **Widget reads** — assigns Python variables from `dbutils.widgets.get()`.
+3. **Execute** — calls `main.main(table_name=..., output_path=...,
+   file_format=..., where_clause=...)`.
 
 ## Development
 
 ```bash
-# Set parameters via environment variables
-export TABLE_NAME='`catalog`.schema.table'
-export OUTPUT_PATH='s3://bucket/path/'
-export FILE_FORMAT='json'
-
-# Launch Jupyter with Databricks kernel
+# Launch Jupyter with Databricks kernel and fill widget values interactively
 jupyter lab launcher.ipynb
 ```
 
 ## Running as a Databricks Job
 
-Configure the notebook task to point at `launcher` with base parameters:
+Configure the notebook task to point at `launcher` with base parameters.
+Each key maps to the widget name defined in cell 1:
 
 ```json
 {
@@ -42,7 +50,8 @@ Configure the notebook task to point at `launcher` with base parameters:
     "base_parameters": {
       "table_name": "`catalog`.schema.table",
       "output_path": "s3://bucket/path/",
-      "file_format": "json"
+      "file_format": "parquet",
+      "where_clause": ""
     }
   }
 }

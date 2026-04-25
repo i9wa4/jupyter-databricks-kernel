@@ -11,6 +11,9 @@ def export_table(
     table_name: str,
     output_path: str,
     file_format: str = "parquet",
+    where_clause: str = "",
 ) -> None:
     df = spark.table(table_name)
+    if where_clause:
+        df = df.where(where_clause)
     df.write.format(file_format).mode("overwrite").save(output_path)
