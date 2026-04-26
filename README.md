@@ -32,8 +32,8 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 1. Install the kernel:
 
    ```bash
-   pip install jupyter-databricks-kernel
-   python -m jupyter_databricks_kernel.install
+   uv add jupyter-databricks-kernel
+   uv run python -m jupyter_databricks_kernel.install
    ```
 
    Install options:
@@ -200,7 +200,7 @@ on Databricks clusters.
 Install papermill:
 
 ```bash
-pip install papermill
+uv add papermill
 ```
 
 Run a notebook with parameter injection:
