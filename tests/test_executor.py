@@ -633,9 +633,7 @@ class TestClusterStateWithFixture:
 class TestCallerAttribution:
     """Tests for execution attribution via the caller parameter."""
 
-    def test_default_caller_is_package_name(
-        self, mock_config: MagicMock
-    ) -> None:
+    def test_default_caller_is_package_name(self, mock_config: MagicMock) -> None:
         """Test that the default caller is jupyter-databricks-kernel."""
         executor = DatabricksExecutor(mock_config)
         assert executor.caller == "jupyter-databricks-kernel"
@@ -653,9 +651,7 @@ class TestCallerAttribution:
 
         from jupyter_databricks_kernel import __version__
 
-        with patch(
-            "jupyter_databricks_kernel.executor.WorkspaceClient"
-        ) as mock_ws_cls:
+        with patch("jupyter_databricks_kernel.executor.WorkspaceClient") as mock_ws_cls:
             executor = DatabricksExecutor(mock_config, caller="test-caller")
             executor._ensure_client()
 
@@ -672,9 +668,7 @@ class TestCallerAttribution:
 
         from jupyter_databricks_kernel import __version__
 
-        with patch(
-            "jupyter_databricks_kernel.executor.WorkspaceClient"
-        ) as mock_ws_cls:
+        with patch("jupyter_databricks_kernel.executor.WorkspaceClient") as mock_ws_cls:
             executor = DatabricksExecutor(mock_config)
             executor._ensure_client()
 
