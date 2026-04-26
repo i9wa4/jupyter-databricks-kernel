@@ -274,12 +274,24 @@ class DatabricksExecutor:
             Exception: If execution fails due to API errors.
         """
         client = self._ensure_client()
-        response = client.command_execution.execute(
+        waiter = client.command_execution.execute(
             cluster_id=self.config.cluster_id,
             context_id=self.context_id,
             language=compute.Language.PYTHON,
             command=code,
-        ).result(timeout=COMMAND_EXECUTION_TIMEOUT)
+        )
+        try:
+            response = waiter.result(timeout=COMMAND_EXECUTION_TIMEOUT)
+        except TimeoutError:
+            try:
+                client.command_execution.cancel(
+                    cluster_id=self.config.cluster_id,
+                    context_id=self.context_id,
+                    command_id=waiter.command_id,
+                )
+            except Exception:
+                pass
+            raise
 
         if response is None:
             return ExecutionResult(
