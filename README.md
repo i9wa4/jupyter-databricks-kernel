@@ -204,6 +204,15 @@ uv run run-ipynb path/to/notebook.ipynb
 Output is written to `outputs/<filename>.output.md` relative to the current
 working directory.
 
+#### Behavior notes
+
+| Behavior | Details |
+| --- | --- |
+| Default timeout | 10 minutes per command/cell |
+| Timeout handling | Cluster command is cancelled; error written to output file |
+| Exit code | Exits with code 1 on error or timeout; code 0 on success |
+| `run-ipynb --inplace` | Writes cell outputs back into the notebook; backup at `<path>.bak` |
+
 ## 6. Papermill Integration
 
 [papermill](https://papermill.readthedocs.io/) supports parameter injection for

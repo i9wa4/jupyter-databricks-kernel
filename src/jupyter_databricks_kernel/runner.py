@@ -230,12 +230,24 @@ def _cli_dispatch(subcommand: str) -> None:
 
 
 def cli_run_py() -> None:
-    """CLI entry point for run-py."""
+    """CLI entry point for run-py.
+
+    Executes a .py file on the cluster. Output is written to
+    outputs/<stem>.output.md relative to CWD. Default execution timeout is
+    10 minutes; the cluster command is cancelled on timeout. Exits with
+    code 1 on error or timeout.
+    """
     _cli_dispatch("run_py")
 
 
 def cli_run_db_py() -> None:
-    """CLI entry point for run-db-py."""
+    """CLI entry point for run-db-py.
+
+    Executes a Databricks .py notebook on the cluster. Output is written to
+    outputs/<stem>.output.md relative to CWD. Default execution timeout is
+    10 minutes; the cluster command is cancelled on timeout. Exits with
+    code 1 on error or timeout.
+    """
     _cli_dispatch("run_db_py")
 
 
@@ -244,8 +256,13 @@ def cli_run_ipynb() -> None:
 
     Usage: run-ipynb <path> [--inplace]
 
-    Without --inplace: executes cells and writes output to outputs/<stem>.output.md.
-    With --inplace: writes cell outputs back into the notebook (backup at <path>.bak).
+    Without --inplace: executes cells and writes combined output to
+    outputs/<stem>.output.md relative to CWD.
+    With --inplace: writes cell outputs back into the notebook (backup at
+    <path>.bak).
+
+    Default execution timeout per cell is 10 minutes; the cluster command is
+    cancelled on timeout. Exits with code 1 on error or timeout.
     """
     import sys
 
