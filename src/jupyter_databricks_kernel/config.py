@@ -132,7 +132,8 @@ class Config:
             )
 
         logger.debug(
-            "Configuration loaded: cluster_id=%s, mcp_profile=%s, sync_enabled=%s, base_path=%s",
+            "Configuration loaded: cluster_id=%s, mcp_profile=%s,"
+            " sync_enabled=%s, base_path=%s",
             config.cluster_id,
             config.mcp_profile,
             config.sync.enabled,
