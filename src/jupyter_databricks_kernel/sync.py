@@ -395,7 +395,6 @@ class FileSync:
             raise ValueError(f"Invalid session_id format: {session_id}")
         self.session_id = session_id
         self._synced = False
-        self._user_name: str | None = None
         self._pathspec: pathspec.PathSpec | None = None
         self._pathspec_mtime: float = 0.0
         self._file_cache: FileCache | None = None
@@ -430,28 +429,6 @@ class FileSync:
         sanitized = sanitized.strip(". ")
         # Ensure non-empty
         return sanitized or "unknown"
-
-    def _get_user_name(self) -> str:
-        """Get the current user's email/username (sanitized for path safety).
-
-        For service principals, user_name may not exist. Falls back to
-        application_id, display_name, or "unknown" in that order.
-
-        Returns:
-            The sanitized user's email address or identifier.
-        """
-        if self._user_name is None:
-            client = self._ensure_client()
-            me = client.current_user.me()
-            # NOTE: Service principals may not have user_name attribute
-            raw_name = (
-                getattr(me, "user_name", None)
-                or getattr(me, "application_id", None)
-                or getattr(me, "display_name", None)
-                or "unknown"
-            )
-            self._user_name = self._sanitize_path_component(raw_name)
-        return self._user_name
 
     def _get_source_path(self) -> Path:
         """Get the source directory path.
@@ -1005,16 +982,12 @@ del _extract_dir, _cluster_zip_path, _local_zip
                 ),
             ]
 
-        # Use intelligent fallback: try /Workspace/Users/ first,
-        # fallback to /tmp/workspace
-        user_name = self._get_user_name()
-        workspace_extract_dir = (
-            f"/Workspace/Users/{user_name}/jupyter_databricks_kernel/{self.session_id}"
+        from pathlib import Path
+
+        project = self._sanitize_path_component(
+            self.config.base_path.name if self.config.base_path else Path.cwd().name
         )
-        # NOTE: Use /workspace suffix to avoid confusion with zip path
-        fallback_extract_dir = (
-            f"/tmp/jupyter_databricks_kernel_{self.session_id}/workspace"
-        )
+        workspace_extract_dir = f"/tmp/jupyter_databricks_kernel/{project}"
 
         return [
             (
@@ -1024,59 +997,42 @@ import sys
 import zipfile
 import os
 import shutil
-import logging
 
-_logger = logging.getLogger("jupyter_databricks_kernel")
+_extract_dir = "{workspace_extract_dir}"
+_cluster_zip_path = "{cluster_zip_path}"
 
-# Try /Workspace/Users/ first, fallback to /tmp/workspace if it fails
-_primary_dir = "{workspace_extract_dir}"
-_fallback_dir = "{fallback_extract_dir}"
-
-try:
-    if os.path.exists(_primary_dir):
-        shutil.rmtree(_primary_dir)
-    os.makedirs(_primary_dir, exist_ok=True)
-    _extract_dir = _primary_dir
-except (OSError, PermissionError, FileNotFoundError) as e:
-    # Fallback to /tmp/workspace for service principals or permission issues
-    _logger.info(
-        f"Failed to create {{_primary_dir}}: {{e.__class__.__name__}}: {{e}}. "
-        f"Falling back to {{_fallback_dir}}"
-    )
-    if os.path.exists(_fallback_dir):
-        shutil.rmtree(_fallback_dir)
-    os.makedirs(_fallback_dir, exist_ok=True)
-    _extract_dir = _fallback_dir
+if os.path.exists(_extract_dir):
+    shutil.rmtree(_extract_dir)
+os.makedirs(_extract_dir, mode=0o700, exist_ok=True)
 ''',
             ),
             (
                 "Extracting files",
-                f"""
-# Zip is already on cluster at {cluster_zip_path}
-_cluster_zip = "{cluster_zip_path}"
-with zipfile.ZipFile(_cluster_zip, 'r') as zf:
+                f'''
+_extract_dir = "{workspace_extract_dir}"
+_cluster_zip_path = "{cluster_zip_path}"
+with zipfile.ZipFile(_cluster_zip_path, 'r') as zf:
     zf.extractall(_extract_dir)
-# NOTE: Keep zip file for potential reconnection scenarios
-""",
+''',
             ),
             (
                 "Configuring paths",
-                """
+                f'''
+_extract_dir = "{workspace_extract_dir}"
 if _extract_dir not in sys.path:
     sys.path.insert(0, _extract_dir)
 os.chdir(_extract_dir)
-del _extract_dir, _primary_dir, _fallback_dir, _logger
-""",
+del _extract_dir, _cluster_zip_path
+''',
             ),
         ]
 
     def cleanup(self) -> None:
-        """Clean up DBFS and Workspace files.
+        """Clean up DBFS files and command execution context.
 
-        Note: This method cleans up DBFS and Workspace paths. Local filesystem
-        paths (like /tmp/ on the cluster) are not cleaned up as they are
-        inaccessible from the kernel side and typically get cleaned up
-        automatically or overwritten in subsequent sessions.
+        Note: The /tmp/jupyter_databricks_kernel/<project>/ path on the cluster
+        driver is not cleaned up here as it is inaccessible from the kernel side
+        and gets overwritten on the next sync.
         """
         if not self._synced:
             return
@@ -1089,19 +1045,6 @@ del _extract_dir, _primary_dir, _fallback_dir, _logger
         except Exception as e:
             logger.debug("DBFS cleanup error (ignored): %s", e)
 
-        # Clean up Workspace directory if user_name is known
-        # This handles the primary path for regular users
-        if self._user_name is not None:
-            workspace_dir = (
-                f"/Workspace/Users/{self._user_name}"
-                f"/jupyter_databricks_kernel/{self.session_id}"
-            )
-            try:
-                client = self._ensure_client()
-                client.workspace.delete(workspace_dir, recursive=True)
-            except Exception as e:
-                logger.debug("Workspace cleanup error (ignored): %s", e)
-
         # Clean up self-managed command execution context
         if self._command_context_id and self.config.cluster_id:
             try:
@@ -1113,10 +1056,3 @@ del _extract_dir, _primary_dir, _fallback_dir, _logger
             except Exception as e:
                 logger.debug("Context cleanup error (ignored): %s", e)
             self._command_context_id = None
-
-        # NOTE: Local filesystem paths used by Command API transfer
-        # (e.g., /tmp/jupyter_databricks_kernel_{session_id}/)
-        # are not cleaned up here as they require an active
-        # execution context. These should be cleaned up via Command API execution
-        # when the executor context is available. Files in /tmp/ are typically
-        # cleaned up automatically by the cluster or overwritten in subsequent sessions.
