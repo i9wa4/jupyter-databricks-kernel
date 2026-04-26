@@ -225,6 +225,8 @@ def _cli_dispatch(subcommand: str) -> None:
         write_output(result, file_path)
     finally:
         executor.destroy_context()
+    if result.status == "error":
+        sys.exit(1)
 
 
 def cli_run_py() -> None:
@@ -248,7 +250,7 @@ def cli_run_ipynb() -> None:
     import sys
 
     from .config import Config
-    from .executor import DatabricksExecutor
+    from .executor import DatabricksExecutor, ExecutionResult
 
     args = sys.argv[1:]
     inplace = "--inplace" in args
@@ -260,12 +262,17 @@ def cli_run_ipynb() -> None:
     executor.create_context()
     try:
         if inplace:
-            result = _run_ipynb_inplace(file_path, executor)
+            try:
+                result = _run_ipynb_inplace(file_path, executor)
+            except Exception as e:
+                result = ExecutionResult(status="error", error=str(e))
         else:
             result = run_ipynb(file_path, executor)
         write_output(result, file_path)
     finally:
         executor.destroy_context()
+    if result.status == "error":
+        sys.exit(1)
 
 
 if __name__ == "__main__":
