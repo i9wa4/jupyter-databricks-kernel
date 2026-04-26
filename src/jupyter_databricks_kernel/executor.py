@@ -203,6 +203,7 @@ class DatabricksExecutor:
         *,
         allow_reconnect: bool = True,
         on_progress: ProgressCallback | None = None,
+        timeout: timedelta | None = None,
     ) -> ExecutionResult:
         """Execute code on the Databricks cluster.
 
@@ -211,6 +212,7 @@ class DatabricksExecutor:
             allow_reconnect: If True, attempt to reconnect on context errors.
             on_progress: Optional callback for progress updates.
                 Called with (cluster_state, command_status, elapsed_seconds).
+            timeout: Execution timeout (default: COMMAND_EXECUTION_TIMEOUT).
 
         Returns:
             Execution result containing output or error.
@@ -232,9 +234,9 @@ class DatabricksExecutor:
 
         try:
             if on_progress:
-                result = self._execute_with_polling(code, on_progress)
+                result = self._execute_with_polling(code, on_progress, timeout=timeout)
             else:
-                result = self._execute_internal(code)
+                result = self._execute_internal(code, timeout=timeout)
             return result
         except Exception as e:
             if allow_reconnect and self._is_context_invalid_error(e):
@@ -244,9 +246,11 @@ class DatabricksExecutor:
                     time.sleep(RECONNECT_DELAY_SECONDS)
                     self.reconnect()
                     if on_progress:
-                        result = self._execute_with_polling(code, on_progress)
+                        result = self._execute_with_polling(
+                            code, on_progress, timeout=timeout
+                        )
                     else:
-                        result = self._execute_internal(code)
+                        result = self._execute_internal(code, timeout=timeout)
                     return replace(result, reconnected=True)
                 except Exception as retry_error:
                     logger.error("Reconnection failed: %s", retry_error)
@@ -261,11 +265,14 @@ class DatabricksExecutor:
                     error=str(e),
                 )
 
-    def _execute_internal(self, code: str) -> ExecutionResult:
+    def _execute_internal(
+        self, code: str, timeout: timedelta | None = None
+    ) -> ExecutionResult:
         """Internal execution without reconnection logic.
 
         Args:
             code: The Python code to execute.
+            timeout: Execution timeout (default: COMMAND_EXECUTION_TIMEOUT).
 
         Returns:
             Execution result containing output or error.
@@ -280,8 +287,9 @@ class DatabricksExecutor:
             language=compute.Language.PYTHON,
             command=code,
         )
+        effective_timeout = timeout or COMMAND_EXECUTION_TIMEOUT
         try:
-            response = waiter.result(timeout=COMMAND_EXECUTION_TIMEOUT)
+            response = waiter.result(timeout=effective_timeout)
         except TimeoutError:
             try:
                 client.command_execution.cancel(
@@ -361,12 +369,14 @@ class DatabricksExecutor:
         self,
         code: str,
         on_progress: ProgressCallback,
+        timeout: timedelta | None = None,
     ) -> ExecutionResult:
         """Execute code with polling for progress updates.
 
         Args:
             code: The Python code to execute.
             on_progress: Callback for progress updates.
+            timeout: Execution timeout (default: COMMAND_EXECUTION_TIMEOUT).
 
         Returns:
             Execution result containing output or error.
@@ -377,7 +387,7 @@ class DatabricksExecutor:
         """
         client = self._ensure_client()
         start_time = time.time()
-        timeout_seconds = COMMAND_EXECUTION_TIMEOUT.total_seconds()
+        timeout_seconds = (timeout or COMMAND_EXECUTION_TIMEOUT).total_seconds()
 
         # Start execution without blocking
         waiter = client.command_execution.execute(

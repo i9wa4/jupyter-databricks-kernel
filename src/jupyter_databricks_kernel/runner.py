@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -12,21 +12,30 @@ if TYPE_CHECKING:
     from .executor import DatabricksExecutor, ExecutionResult
 
 
-def run_py(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
+def run_py(
+    path: Path,
+    executor: DatabricksExecutor,
+    timeout: timedelta | None = None,
+) -> ExecutionResult:
     """Execute a plain Python file on the Databricks cluster.
 
     Args:
         path: Path to the .py file to execute.
         executor: Initialized DatabricksExecutor with an active context.
+        timeout: Execution timeout (default: COMMAND_EXECUTION_TIMEOUT).
 
     Returns:
         ExecutionResult from the cluster.
     """
     code = path.read_text(encoding="utf-8")
-    return executor.execute(code)
+    return executor.execute(code, timeout=timeout)
 
 
-def run_db_py(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
+def run_db_py(
+    path: Path,
+    executor: DatabricksExecutor,
+    timeout: timedelta | None = None,
+) -> ExecutionResult:
     """Execute a Databricks notebook .py file on the cluster.
 
     Databricks .py notebooks are valid Python; magic command splitting
@@ -35,15 +44,20 @@ def run_db_py(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
     Args:
         path: Path to the Databricks .py notebook file.
         executor: Initialized DatabricksExecutor with an active context.
+        timeout: Execution timeout (default: COMMAND_EXECUTION_TIMEOUT).
 
     Returns:
         ExecutionResult from the cluster.
     """
     code = path.read_text(encoding="utf-8")
-    return executor.execute(code)
+    return executor.execute(code, timeout=timeout)
 
 
-def run_ipynb(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
+def run_ipynb(
+    path: Path,
+    executor: DatabricksExecutor,
+    timeout: timedelta | None = None,
+) -> ExecutionResult:
     """Execute all code cells of a notebook and return combined output.
 
     Does NOT modify the notebook file. Use cli_run_ipynb with --inplace to
@@ -52,6 +66,7 @@ def run_ipynb(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
     Args:
         path: Path to the .ipynb notebook to execute.
         executor: Initialized DatabricksExecutor with an active context.
+        timeout: Execution timeout per cell (default: COMMAND_EXECUTION_TIMEOUT).
 
     Returns:
         Summary ExecutionResult with combined output from all cells.
@@ -72,7 +87,7 @@ def run_ipynb(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
         if not source.strip():
             continue
 
-        result = executor.execute(source)
+        result = executor.execute(source, timeout=timeout)
         last_result = result
 
         if result.output:
@@ -92,7 +107,11 @@ def run_ipynb(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
     )
 
 
-def _run_ipynb_inplace(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
+def _run_ipynb_inplace(
+    path: Path,
+    executor: DatabricksExecutor,
+    timeout: timedelta | None = None,
+) -> ExecutionResult:
     """Execute notebook cells and write outputs back into the notebook file.
 
     Saves a backup at <path>.bak before mutating; restores on exception.
@@ -100,6 +119,7 @@ def _run_ipynb_inplace(path: Path, executor: DatabricksExecutor) -> ExecutionRes
     Args:
         path: Path to the .ipynb notebook to execute in-place.
         executor: Initialized DatabricksExecutor with an active context.
+        timeout: Execution timeout per cell (default: COMMAND_EXECUTION_TIMEOUT).
 
     Returns:
         Summary ExecutionResult with combined output from all cells.
@@ -124,7 +144,7 @@ def _run_ipynb_inplace(path: Path, executor: DatabricksExecutor) -> ExecutionRes
             if not source.strip():
                 continue
 
-            result = executor.execute(source)
+            result = executor.execute(source, timeout=timeout)
             last_result = result
 
             cell_outputs: list[dict[str, Any]] = []
@@ -220,11 +240,22 @@ def _cli_dispatch(subcommand: str) -> None:
     from .executor import DatabricksExecutor
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("file")
-    parser.add_argument("--output-dir", default=".cache/outputs")
+    parser.add_argument("file", help="path to the file to execute")
+    parser.add_argument(
+        "--output-dir",
+        default=".cache/outputs",
+        help="directory to write output file into (default: .cache/outputs)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=600,
+        help="execution timeout in seconds (default: 600)",
+    )
     parsed = parser.parse_args()
     file_path = Path(parsed.file)
     output_dir = parsed.output_dir
+    timeout = timedelta(seconds=parsed.timeout)
 
     config = Config.load()
     executor = DatabricksExecutor(config)
@@ -233,7 +264,7 @@ def _cli_dispatch(subcommand: str) -> None:
         fn = {"run_py": run_py, "run_db_py": run_db_py, "run_ipynb": run_ipynb}[
             subcommand
         ]
-        result = fn(file_path, executor)
+        result = fn(file_path, executor, timeout=timeout)
         write_output(result, file_path, output_dir)
     finally:
         executor.destroy_context()
@@ -288,13 +319,28 @@ def cli_run_ipynb() -> None:
     from .executor import DatabricksExecutor, ExecutionResult
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("file")
-    parser.add_argument("--inplace", action="store_true")
-    parser.add_argument("--output-dir", default=".cache/outputs")
+    parser.add_argument("file", help="path to the .ipynb file to execute")
+    parser.add_argument(
+        "--inplace",
+        action="store_true",
+        help="write cell outputs back into the notebook (backup at <path>.bak)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=".cache/outputs",
+        help="directory to write output file into (default: .cache/outputs)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=600,
+        help="execution timeout per cell in seconds (default: 600)",
+    )
     parsed = parser.parse_args()
     file_path = Path(parsed.file)
     inplace = parsed.inplace
     output_dir = parsed.output_dir
+    timeout = timedelta(seconds=parsed.timeout)
 
     config = Config.load()
     executor = DatabricksExecutor(config)
@@ -302,11 +348,11 @@ def cli_run_ipynb() -> None:
     try:
         if inplace:
             try:
-                result = _run_ipynb_inplace(file_path, executor)
+                result = _run_ipynb_inplace(file_path, executor, timeout=timeout)
             except Exception as e:
                 result = ExecutionResult(status="error", error=str(e))
         else:
-            result = run_ipynb(file_path, executor)
+            result = run_ipynb(file_path, executor, timeout=timeout)
         write_output(result, file_path, output_dir)
     finally:
         executor.destroy_context()
