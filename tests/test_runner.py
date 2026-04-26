@@ -45,7 +45,7 @@ class TestRunPy:
 
         result = run_py(py_file, executor)
 
-        executor.execute.assert_called_once_with("x = 1\n")
+        executor.execute.assert_called_once_with("x = 1\n", timeout=None)
         assert result.status == "ok"
 
     def test_returns_execution_result(self, tmp_path: Path) -> None:
@@ -74,7 +74,9 @@ class TestRunDbPy:
 
         result = run_db_py(py_file, executor)
 
-        executor.execute.assert_called_once_with("# Databricks notebook\nprint('db')\n")
+        executor.execute.assert_called_once_with(
+            "# Databricks notebook\nprint('db')\n", timeout=None
+        )
         assert result.status == "ok"
 
     def test_identical_behavior_to_run_py(self, tmp_path: Path) -> None:
@@ -200,7 +202,7 @@ class TestWriteOutput:
     """Tests for write_output()."""
 
     def test_creates_outputs_dir_and_file(self, tmp_path: Path) -> None:
-        """write_output creates outputs/<stem>.output.md relative to CWD."""
+        """write_output creates .cache/outputs/<stem>.<timestamp>.output.md."""
         import os
 
         os.chdir(tmp_path)
@@ -209,7 +211,9 @@ class TestWriteOutput:
 
         out_path = write_output(result, source)
 
-        assert out_path.resolve() == tmp_path / "outputs" / "script.output.md"
+        assert out_path.parent.resolve() == (tmp_path / ".cache" / "outputs").resolve()
+        assert out_path.name.startswith("script.")
+        assert out_path.name.endswith(".output.md")
         assert out_path.exists()
 
     def test_markdown_contains_status_and_output(self, tmp_path: Path) -> None:
@@ -262,4 +266,5 @@ class TestWriteOutput:
         source = tmp_path / "myfile.py"
 
         out_path = write_output(result, source)
-        assert out_path.name == "myfile.output.md"
+        assert out_path.name.startswith("myfile.")
+        assert out_path.name.endswith(".output.md")
