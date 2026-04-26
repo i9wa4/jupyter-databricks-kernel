@@ -5,7 +5,7 @@ with `jupyter-databricks-kernel`.
 
 ## Project Structure
 
-```
+```text
 table-exporter/
 ├── .ruff.toml           # Ruff configuration
 ├── pyproject.toml       # Project metadata and tool config
@@ -25,8 +25,8 @@ table-exporter/
 `launcher.ipynb` has exactly 3 cells:
 
 1. **Widget definitions** — `dbutils.widgets.text()` calls that declare each
-   parameter with a default. Databricks Jobs override these via `base_parameters`
-   at runtime; locally you can fill them in the widget UI.
+   parameter with a default. Databricks Jobs override these via
+   `base_parameters` at runtime; locally you can fill them in the widget UI.
 2. **Widget reads** — assigns Python variables from `dbutils.widgets.get()`.
 3. **Execute** — calls `main.main(table_name=..., output_path=...,
    file_format=..., where_clause=...)`.
