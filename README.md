@@ -201,13 +201,16 @@ uv run run-db-py path/to/notebook.py
 uv run run-ipynb path/to/notebook.ipynb
 ```
 
-Output is written to `outputs/<filename>.output.md` relative to the current
-working directory.
+Output is written to `.cache/outputs/<stem>.<YYYYMMDDTHHMMSS>.output.md`
+relative to the current working directory. Use `--output-dir` to override the
+directory.
 
 #### Behavior notes
 
 | Behavior | Details |
 | --- | --- |
+| Default output dir | `.cache/outputs/` (override with `--output-dir DIR`) |
+| Output filename | `<stem>.<YYYYMMDDTHHMMSS>.output.md` — timestamped, never overwritten |
 | Default timeout | 10 minutes per command/cell |
 | Timeout handling | Cluster command is cancelled; error written to output file |
 | Exit code | Exits with code 1 on error or timeout; code 0 on success |

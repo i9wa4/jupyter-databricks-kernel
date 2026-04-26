@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -171,23 +172,24 @@ def _run_ipynb_inplace(path: Path, executor: DatabricksExecutor) -> ExecutionRes
 
 
 def write_output(
-    result: ExecutionResult, path: Path, output_dir: str = "outputs"
+    result: ExecutionResult, path: Path, output_dir: str = ".cache/outputs"
 ) -> Path:
-    """Write an ExecutionResult to <output_dir>/<path.stem>.output.md.
+    """Write an ExecutionResult to <output_dir>/<path.stem>.<timestamp>.output.md.
 
     The output directory is created (including parents) if it does not exist.
 
     Args:
         result: The ExecutionResult to write.
         path: The source file path (used to derive the output filename).
-        output_dir: Directory to write output file into (default: "outputs").
+        output_dir: Directory to write output file into (default: ".cache/outputs").
 
     Returns:
         Path to the written output file.
     """
     outputs_dir = Path(output_dir)
     outputs_dir.mkdir(parents=True, exist_ok=True)
-    out_path = outputs_dir / f"{path.stem}.output.md"
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    out_path = outputs_dir / f"{path.stem}.{timestamp}.output.md"
 
     lines: list[str] = [
         f"# Output: {path.name}",
@@ -219,7 +221,7 @@ def _cli_dispatch(subcommand: str) -> None:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("file")
-    parser.add_argument("--output-dir", default="outputs")
+    parser.add_argument("--output-dir", default=".cache/outputs")
     parsed = parser.parse_args()
     file_path = Path(parsed.file)
     output_dir = parsed.output_dir
@@ -245,9 +247,9 @@ def cli_run_py() -> None:
     Usage: run-py <path> [--output-dir DIR]
 
     Executes a .py file on the cluster. Output is written to
-    <output-dir>/<stem>.output.md (default output-dir: "outputs"). Default
-    execution timeout is 10 minutes; the cluster command is cancelled on
-    timeout. Exits with code 1 on error or timeout.
+    <output-dir>/<stem>.<YYYYMMDDTHHMMSS>.output.md (default output-dir:
+    ".cache/outputs"). Default execution timeout is 10 minutes; the cluster
+    command is cancelled on timeout. Exits with code 1 on error or timeout.
     """
     _cli_dispatch("run_py")
 
@@ -258,9 +260,9 @@ def cli_run_db_py() -> None:
     Usage: run-db-py <path> [--output-dir DIR]
 
     Executes a Databricks .py notebook on the cluster. Output is written to
-    <output-dir>/<stem>.output.md (default output-dir: "outputs"). Default
-    execution timeout is 10 minutes; the cluster command is cancelled on
-    timeout. Exits with code 1 on error or timeout.
+    <output-dir>/<stem>.<YYYYMMDDTHHMMSS>.output.md (default output-dir:
+    ".cache/outputs"). Default execution timeout is 10 minutes; the cluster
+    command is cancelled on timeout. Exits with code 1 on error or timeout.
     """
     _cli_dispatch("run_db_py")
 
@@ -271,7 +273,8 @@ def cli_run_ipynb() -> None:
     Usage: run-ipynb <path> [--inplace] [--output-dir DIR]
 
     Without --inplace: executes cells and writes combined output to
-    <output-dir>/<stem>.output.md (default output-dir: "outputs").
+    <output-dir>/<stem>.<YYYYMMDDTHHMMSS>.output.md (default output-dir:
+    ".cache/outputs").
     With --inplace: writes cell outputs back into the notebook (backup at
     <path>.bak).
 
@@ -287,7 +290,7 @@ def cli_run_ipynb() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("file")
     parser.add_argument("--inplace", action="store_true")
-    parser.add_argument("--output-dir", default="outputs")
+    parser.add_argument("--output-dir", default=".cache/outputs")
     parsed = parser.parse_args()
     file_path = Path(parsed.file)
     inplace = parsed.inplace
