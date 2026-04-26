@@ -43,13 +43,61 @@ def run_db_py(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
 
 
 def run_ipynb(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
-    """Execute all code cells of a notebook, writing outputs back in-place.
+    """Execute all code cells of a notebook and return combined output.
 
-    Saves a backup at <path>.bak before mutating; restores on exception.
-    Returns a summary ExecutionResult combining all cell outputs.
+    Does NOT modify the notebook file. Use cli_run_ipynb with --inplace to
+    write cell outputs back to the notebook.
 
     Args:
         path: Path to the .ipynb notebook to execute.
+        executor: Initialized DatabricksExecutor with an active context.
+
+    Returns:
+        Summary ExecutionResult with combined output from all cells.
+    """
+    with open(path, encoding="utf-8") as f:
+        notebook: dict[str, Any] = json.load(f)
+
+    cells = notebook.get("cells", [])
+    combined_output: list[str] = []
+    last_result = None
+
+    for cell in cells:
+        if cell.get("cell_type") != "code":
+            continue
+        source = cell.get("source", "")
+        if isinstance(source, list):
+            source = "".join(source)
+        if not source.strip():
+            continue
+
+        result = executor.execute(source)
+        last_result = result
+
+        if result.output:
+            combined_output.append(result.output)
+        if result.error:
+            combined_output.append(f"ERROR: {result.error}")
+
+    from .executor import ExecutionResult
+
+    if last_result is None:
+        return ExecutionResult(status="ok", output="(no code cells)")
+
+    return ExecutionResult(
+        status=last_result.status,
+        output="\n".join(combined_output) if combined_output else None,
+        error=last_result.error,
+    )
+
+
+def _run_ipynb_inplace(path: Path, executor: DatabricksExecutor) -> ExecutionResult:
+    """Execute notebook cells and write outputs back into the notebook file.
+
+    Saves a backup at <path>.bak before mutating; restores on exception.
+
+    Args:
+        path: Path to the .ipynb notebook to execute in-place.
         executor: Initialized DatabricksExecutor with an active context.
 
     Returns:
@@ -190,8 +238,34 @@ def cli_run_db_py() -> None:
 
 
 def cli_run_ipynb() -> None:
-    """CLI entry point for run-ipynb."""
-    _cli_dispatch("run_ipynb")
+    """CLI entry point for run-ipynb.
+
+    Usage: run-ipynb <path> [--inplace]
+
+    Without --inplace: executes cells and writes output to outputs/<stem>.output.md.
+    With --inplace: writes cell outputs back into the notebook (backup at <path>.bak).
+    """
+    import sys
+
+    from .config import Config
+    from .executor import DatabricksExecutor
+
+    args = sys.argv[1:]
+    inplace = "--inplace" in args
+    file_args = [a for a in args if not a.startswith("--")]
+    file_path = Path(file_args[0])
+
+    config = Config.load()
+    executor = DatabricksExecutor(config)
+    executor.create_context()
+    try:
+        if inplace:
+            result = _run_ipynb_inplace(file_path, executor)
+        else:
+            result = run_ipynb(file_path, executor)
+        write_output(result, file_path)
+    finally:
+        executor.destroy_context()
 
 
 if __name__ == "__main__":

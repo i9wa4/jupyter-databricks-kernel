@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-import pytest
-
 from jupyter_databricks_kernel.executor import ExecutionResult
 from jupyter_databricks_kernel.runner import run_db_py, run_ipynb, run_py, write_output
 
@@ -131,18 +129,6 @@ class TestRunIpynb:
 
         assert executor.execute.call_count == 2
 
-    def test_writes_outputs_back_in_place(self, tmp_path: Path) -> None:
-        """run_ipynb mutates the notebook file with cell outputs."""
-        nb = self._minimal_notebook(["print('hello')"])
-        nb_path = tmp_path / "test.ipynb"
-        nb_path.write_text(json.dumps(nb))
-        executor = _make_executor(output="hello")
-
-        run_ipynb(nb_path, executor)
-
-        updated = json.loads(nb_path.read_text())
-        assert updated["cells"][0]["outputs"] != []
-
     def test_returns_summary_execution_result(self, tmp_path: Path) -> None:
         """run_ipynb returns a summary ExecutionResult."""
         nb = self._minimal_notebook(["print('c1')", "print('c2')"])
@@ -180,33 +166,6 @@ class TestRunIpynb:
 
         run_ipynb(nb_path, executor)
         assert executor.execute.call_count == 1
-
-    def test_restores_backup_on_exception(self, tmp_path: Path) -> None:
-        """run_ipynb restores the original notebook if execution raises."""
-        nb = self._minimal_notebook(["print('original')"])
-        nb_path = tmp_path / "test.ipynb"
-        original_text = json.dumps(nb)
-        nb_path.write_text(original_text)
-
-        executor = MagicMock()
-        executor.execute.side_effect = RuntimeError("cluster error")
-
-        with pytest.raises(RuntimeError, match="cluster error"):
-            run_ipynb(nb_path, executor)
-
-        assert nb_path.read_text() == original_text
-        assert not nb_path.with_suffix(".ipynb.bak").exists()
-
-    def test_no_backup_file_left_on_success(self, tmp_path: Path) -> None:
-        """run_ipynb removes the backup after successful execution."""
-        nb = self._minimal_notebook(["print('ok')"])
-        nb_path = tmp_path / "test.ipynb"
-        nb_path.write_text(json.dumps(nb))
-        executor = _make_executor(output="ok")
-
-        run_ipynb(nb_path, executor)
-
-        assert not nb_path.with_suffix(".ipynb.bak").exists()
 
     def test_empty_notebook_returns_no_code_cells(self, tmp_path: Path) -> None:
         """run_ipynb on a notebook with no code cells returns a no-op result."""
