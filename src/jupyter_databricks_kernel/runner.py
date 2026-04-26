@@ -170,20 +170,23 @@ def _run_ipynb_inplace(path: Path, executor: DatabricksExecutor) -> ExecutionRes
         raise
 
 
-def write_output(result: ExecutionResult, path: Path) -> Path:
-    """Write an ExecutionResult to outputs/<path.stem>.output.md.
+def write_output(
+    result: ExecutionResult, path: Path, output_dir: str = "outputs"
+) -> Path:
+    """Write an ExecutionResult to <output_dir>/<path.stem>.output.md.
 
-    The outputs/ directory is created relative to CWD if it does not exist.
+    The output directory is created (including parents) if it does not exist.
 
     Args:
         result: The ExecutionResult to write.
         path: The source file path (used to derive the output filename).
+        output_dir: Directory to write output file into (default: "outputs").
 
     Returns:
         Path to the written output file.
     """
-    outputs_dir = Path("outputs")
-    outputs_dir.mkdir(exist_ok=True)
+    outputs_dir = Path(output_dir)
+    outputs_dir.mkdir(parents=True, exist_ok=True)
     out_path = outputs_dir / f"{path.stem}.output.md"
 
     lines: list[str] = [
@@ -206,14 +209,21 @@ def _cli_dispatch(subcommand: str) -> None:
     """Shared dispatch logic for CLI entry points.
 
     Args:
-        subcommand: One of 'run_py', 'run_db_py', 'run_ipynb'.
+        subcommand: One of 'run_py', 'run_db_py'.
     """
+    import argparse
     import sys
 
     from .config import Config
     from .executor import DatabricksExecutor
 
-    file_path = Path(sys.argv[1])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("file")
+    parser.add_argument("--output-dir", default="outputs")
+    parsed = parser.parse_args()
+    file_path = Path(parsed.file)
+    output_dir = parsed.output_dir
+
     config = Config.load()
     executor = DatabricksExecutor(config)
     executor.create_context()
@@ -222,7 +232,7 @@ def _cli_dispatch(subcommand: str) -> None:
             subcommand
         ]
         result = fn(file_path, executor)
-        write_output(result, file_path)
+        write_output(result, file_path, output_dir)
     finally:
         executor.destroy_context()
     if result.status == "error":
@@ -232,10 +242,12 @@ def _cli_dispatch(subcommand: str) -> None:
 def cli_run_py() -> None:
     """CLI entry point for run-py.
 
+    Usage: run-py <path> [--output-dir DIR]
+
     Executes a .py file on the cluster. Output is written to
-    outputs/<stem>.output.md relative to CWD. Default execution timeout is
-    10 minutes; the cluster command is cancelled on timeout. Exits with
-    code 1 on error or timeout.
+    <output-dir>/<stem>.output.md (default output-dir: "outputs"). Default
+    execution timeout is 10 minutes; the cluster command is cancelled on
+    timeout. Exits with code 1 on error or timeout.
     """
     _cli_dispatch("run_py")
 
@@ -243,10 +255,12 @@ def cli_run_py() -> None:
 def cli_run_db_py() -> None:
     """CLI entry point for run-db-py.
 
+    Usage: run-db-py <path> [--output-dir DIR]
+
     Executes a Databricks .py notebook on the cluster. Output is written to
-    outputs/<stem>.output.md relative to CWD. Default execution timeout is
-    10 minutes; the cluster command is cancelled on timeout. Exits with
-    code 1 on error or timeout.
+    <output-dir>/<stem>.output.md (default output-dir: "outputs"). Default
+    execution timeout is 10 minutes; the cluster command is cancelled on
+    timeout. Exits with code 1 on error or timeout.
     """
     _cli_dispatch("run_db_py")
 
@@ -254,25 +268,30 @@ def cli_run_db_py() -> None:
 def cli_run_ipynb() -> None:
     """CLI entry point for run-ipynb.
 
-    Usage: run-ipynb <path> [--inplace]
+    Usage: run-ipynb <path> [--inplace] [--output-dir DIR]
 
     Without --inplace: executes cells and writes combined output to
-    outputs/<stem>.output.md relative to CWD.
+    <output-dir>/<stem>.output.md (default output-dir: "outputs").
     With --inplace: writes cell outputs back into the notebook (backup at
     <path>.bak).
 
     Default execution timeout per cell is 10 minutes; the cluster command is
     cancelled on timeout. Exits with code 1 on error or timeout.
     """
+    import argparse
     import sys
 
     from .config import Config
     from .executor import DatabricksExecutor, ExecutionResult
 
-    args = sys.argv[1:]
-    inplace = "--inplace" in args
-    file_args = [a for a in args if not a.startswith("--")]
-    file_path = Path(file_args[0])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("file")
+    parser.add_argument("--inplace", action="store_true")
+    parser.add_argument("--output-dir", default="outputs")
+    parsed = parser.parse_args()
+    file_path = Path(parsed.file)
+    inplace = parsed.inplace
+    output_dir = parsed.output_dir
 
     config = Config.load()
     executor = DatabricksExecutor(config)
@@ -285,7 +304,7 @@ def cli_run_ipynb() -> None:
                 result = ExecutionResult(status="error", error=str(e))
         else:
             result = run_ipynb(file_path, executor)
-        write_output(result, file_path)
+        write_output(result, file_path, output_dir)
     finally:
         executor.destroy_context()
     if result.status == "error":
