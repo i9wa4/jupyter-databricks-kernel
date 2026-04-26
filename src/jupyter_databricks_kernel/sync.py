@@ -985,9 +985,7 @@ del _extract_dir, _cluster_zip_path, _local_zip
         from pathlib import Path
 
         project = self._sanitize_path_component(
-            self.config.base_path.name
-            if self.config.base_path
-            else Path.cwd().name
+            self.config.base_path.name if self.config.base_path else Path.cwd().name
         )
         workspace_extract_dir = f"/tmp/jupyter_databricks_kernel/{project}"
 
@@ -1058,5 +1056,3 @@ del _extract_dir, _cluster_zip_path
             except Exception as e:
                 logger.debug("Context cleanup error (ignored): %s", e)
             self._command_context_id = None
-
-
