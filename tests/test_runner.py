@@ -13,7 +13,7 @@ from jupyter_databricks_kernel.executor import ExecutionResult
 from jupyter_databricks_kernel.runner import run_db_py, run_ipynb, run_py, write_output
 
 if TYPE_CHECKING:
-    from jupyter_databricks_kernel.executor import DatabricksExecutor
+    pass
 
 
 # ---------------------------------------------------------------------------
