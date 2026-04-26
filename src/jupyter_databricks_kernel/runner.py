@@ -209,7 +209,7 @@ def write_output(
     outputs_dir = Path(output_dir)
     outputs_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
-    out_path = outputs_dir / f"{path.stem}.{timestamp}.output.md"
+    out_path = outputs_dir / f"{path.name}.{timestamp}.output.md"
 
     lines: list[str] = [
         f"# Output: {path.name}",

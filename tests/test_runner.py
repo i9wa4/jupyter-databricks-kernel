@@ -212,7 +212,7 @@ class TestWriteOutput:
         out_path = write_output(result, source)
 
         assert out_path.parent.resolve() == (tmp_path / ".cache" / "outputs").resolve()
-        assert out_path.name.startswith("script.")
+        assert out_path.name.startswith("script.py.")
         assert out_path.name.endswith(".output.md")
         assert out_path.exists()
 
@@ -266,5 +266,5 @@ class TestWriteOutput:
         source = tmp_path / "myfile.py"
 
         out_path = write_output(result, source)
-        assert out_path.name.startswith("myfile.")
+        assert out_path.name.startswith("myfile.py.")
         assert out_path.name.endswith(".output.md")
