@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pyspark.sql import SparkSession
+
 from common.validator import validate_s3_path, validate_table_name
 from processors.exporter import export_table
 
@@ -14,14 +16,16 @@ def run(
 
     Suitable for `uv run run-ipynb` and interactive Databricks notebook use.
     """
-    spark.sql("CREATE DATABASE IF NOT EXISTS default")  # type: ignore[name-defined]  # noqa: F821
-    spark.sql(f"DROP TABLE IF EXISTS {table_name}")  # type: ignore[name-defined]  # noqa: F821
-    spark.sql(  # type: ignore[name-defined]  # noqa: F821
+    spark = SparkSession.getActiveSession()
+    assert spark is not None, "No active SparkSession"
+    spark.sql("CREATE DATABASE IF NOT EXISTS default")
+    spark.sql(f"DROP TABLE IF EXISTS {table_name}")
+    spark.sql(
         f"CREATE TABLE {table_name} USING DELTA "
         "AS SELECT id, name FROM VALUES (1, 'Alice'), (2, 'Bob') t(id, name)"
     )
 
-    df = spark.table(table_name)  # type: ignore[name-defined]  # noqa: F821
+    df = spark.table(table_name)
     if where_clause:
         df = df.where(where_clause)
     df.write.format(file_format).mode("overwrite").save(output_path)

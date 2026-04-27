@@ -20,7 +20,10 @@ def _sync_preamble(executor: DatabricksExecutor) -> None:
 
     file_sync = FileSync(executor.config, str(uuid.uuid4())[:8])
     stats = file_sync.sync(executor=executor)
-    executor.execute(file_sync.get_setup_code(stats.cluster_zip_path))
+    setup_code = file_sync.get_setup_code(stats.cluster_zip_path)
+    setup_result = executor.execute(setup_code)
+    if setup_result.status == "error":
+        raise RuntimeError(f"FileSync setup failed: {setup_result.error}")
 
 
 def run_py(
