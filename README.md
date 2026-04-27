@@ -244,15 +244,64 @@ If the cluster is stopped, increase the startup timeout:
 papermill input.ipynb output.ipynb --kernel databricks --start_timeout 600 -p param1 value1
 ```
 
-## 7. Known Limitations
+## 7. MCP Server Integration
+
+`jupyter-databricks-kernel` can serve as the execution engine behind an
+MCP (Model Context Protocol) server, enabling AI agents to run Python on
+Databricks clusters without requiring direct workspace credentials on the
+client side.
+
+### 7.1. Architecture
+
+A companion MCP server (deployed as a Databricks App) is deployed once per
+Databricks workspace. It holds the workspace Service Principal credentials
+and exposes an `execute_python` tool via MCP. The kernel package's
+`DatabricksExecutor` class is imported by this server as its execution
+engine.
+
+Per-session isolation: `DatabricksExecutor` maintains a `context_id` per
+session. The HTTP adapter keeps a `session_store` keyed by `session_id`
+with a 30-minute idle TTL, giving each caller an isolated execution context.
+
+### 7.2. Per-Project Configuration
+
+Projects that use AI-driven execution create a config file at
+`.databricks/config.json` in the project root:
+
+```json
+{
+  "mcp_profile": "<profile-name>",
+  "cluster_id": "<cluster-id>"
+}
+```
+
+`mcp_profile` maps to a named entry in the AI agent's global config
+(`~/.claude.json` or equivalent). It is the sole workspace identity —
+`workspace_url` is intentionally omitted to avoid two sources of truth.
+
+Switching workspace means switching `mcp_profile` — no credential changes
+needed.
+
+### 7.3. AI Execution Flow
+
+1. AI agent reads `.databricks/config.json` to determine `mcp_profile` and
+   `cluster_id`
+2. AI agent calls `execute_python` on the MCP server identified by
+   `mcp_profile`
+3. The MCP server routes the request through `DatabricksExecutor`
+4. Result is returned to the AI agent
+5. AI agent writes output to `outputs/<filename>.output.md` (for `.py`
+   files) or updates the notebook in-place (for `.ipynb`)
+
+## 8. Known Limitations
 
 - Serverless compute is not supported (Command Execution API limitation)
 - `input()` and interactive prompts do not work
 - Interactive widgets (ipywidgets) are not supported
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
-### 8.1. Kernel feels slow
+### 9.1. Kernel feels slow
 
 File sync may be uploading unnecessary files. Check your sync settings:
 
@@ -289,10 +338,10 @@ File sync may be uploading unnecessary files. Check your sync settings:
    enabled = false
    ```
 
-## 9. Development
+## 10. Development
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and guidelines.
 
-## 10. License
+## 11. License
 
 Apache License 2.0
