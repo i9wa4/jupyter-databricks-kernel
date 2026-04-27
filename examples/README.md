@@ -34,5 +34,6 @@ See: [table-exporter/README.md](./table-exporter/README.md)
 3. Run:
 
    ```bash
-   jupyter lab launcher.ipynb
+   jupyter lab launcher.ipynb        # interactive (with widget UI)
+   uv run run-ipynb launcher.ipynb   # CLI (no kernel startup needed)
    ```

@@ -34,8 +34,11 @@ table-exporter/
 ## Development
 
 ```bash
-# Launch Jupyter with Databricks kernel and fill widget values interactively
+# Interactive: launch Jupyter with Databricks kernel and fill widget values in the UI
 jupyter lab launcher.ipynb
+
+# CLI: run without starting Jupyter (output written to .cache/outputs/)
+uv run run-ipynb launcher.ipynb
 ```
 
 ## Running as a Databricks Job
