@@ -28,7 +28,7 @@ table-exporter/
    parameter with a default. Databricks Jobs override these via
    `base_parameters` at runtime; locally you can fill them in the widget UI.
 2. **Widget reads** — assigns Python variables from `dbutils.widgets.get()`.
-3. **Execute** — calls `main.main(table_name=..., output_path=...,
+3. **Execute** — calls `main.run(table_name=..., output_path=...,
    file_format=..., where_clause=...)`.
 
 ## Development
@@ -37,7 +37,7 @@ table-exporter/
 # Interactive: launch Jupyter with Databricks kernel and fill widget values in the UI
 jupyter lab launcher.ipynb
 
-# CLI: run without starting Jupyter (output written to .cache/outputs/)
+# CLI: run without starting Jupyter (files synced automatically; output written to .cache/outputs/)
 uv run run-ipynb launcher.ipynb
 ```
 
