@@ -191,6 +191,31 @@ If the cluster is stopped, kernel startup may take 5-6 minutes. Increase
 jupyter execute notebook.ipynb --kernel_name=databricks --startup_timeout=600
 ```
 
+### 5.3. Runner CLI (`run-py`, `run-db-py`, `run-ipynb`)
+
+Execute scripts and notebooks directly without launching Jupyter:
+
+```bash
+uv run run-py path/to/script.py
+uv run run-db-py path/to/notebook.py
+uv run run-ipynb path/to/notebook.ipynb
+```
+
+Output is written to `.cache/outputs/<stem>.<YYYYMMDDTHHMMSS>.output.md`
+relative to the current working directory. Use `--output-dir` to override the
+directory.
+
+#### Behavior notes
+
+| Behavior | Details |
+| --- | --- |
+| Default output dir | `.cache/outputs/` (override with `--output-dir DIR`) |
+| Output filename | `<stem>.<YYYYMMDDTHHMMSS>.output.md` — timestamped, never overwritten |
+| Default timeout | 10 minutes per command/cell |
+| Timeout handling | Cluster command is cancelled; error written to output file |
+| Exit code | Exits with code 1 on error or timeout; code 0 on success |
+| `run-ipynb --inplace` | Writes cell outputs back into the notebook; backup at `<path>.bak` |
+
 ## 6. Papermill Integration
 
 [papermill](https://papermill.readthedocs.io/) supports parameter injection for

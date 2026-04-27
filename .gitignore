@@ -209,6 +209,9 @@ __marimo__/
 # Databricks kernel cache
 .jupyter-databricks-kernel-cache.json
 
+# Runner CLI output artifacts
+outputs/
+
 # hatch-vcs generated version file
 src/jupyter_databricks_kernel/_version.py
 
