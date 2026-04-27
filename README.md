@@ -293,6 +293,22 @@ File sync may be uploading unnecessary files. Check your sync settings:
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and guidelines.
 
-## 10. License
+## 10. Examples
+
+The `examples/` directory contains sample projects demonstrating recommended
+patterns for structuring Databricks projects with this kernel.
+
+### table-exporter
+
+A complete example using the **Skinny Notebook Wrapper + Pure Python** pattern:
+
+- `launcher.ipynb` — thin 3-cell notebook (parameters → env vars → run)
+- `main.py` — entry point callable locally and from Databricks Jobs
+- `common/` — parameter handling and validation (no Databricks dependencies)
+- `processors/` — business logic using Spark/dbutils
+
+See [examples/table-exporter/README.md](./examples/table-exporter/README.md).
+
+## 11. License
 
 Apache License 2.0

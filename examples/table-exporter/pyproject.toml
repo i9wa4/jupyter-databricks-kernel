@@ -1,0 +1,23 @@
+[project]
+name = "table-exporter"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"*.ipynb" = ["F821"]  # Undefined name (dbutils, spark injected by Databricks)
+
+[tool.mypy]
+strict = true
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+module = ["pyspark.*"]
+ignore_missing_imports = true

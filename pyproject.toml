@@ -50,6 +50,12 @@ source = "vcs"
 [tool.hatch.build.hooks.vcs]
 version-file = "src/jupyter_databricks_kernel/_version.py"
 
+[tool.hatch.build.targets.wheel]
+exclude = ["examples/"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "tests/", "examples/", "README.md", "CONTRIBUTING.md", "LICENSE"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 88
