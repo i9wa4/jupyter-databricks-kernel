@@ -278,11 +278,15 @@ def _cli_dispatch(subcommand: str) -> None:
     config = Config.load()
     executor = DatabricksExecutor(config)
     executor.create_context()
+    from .executor import ExecutionResult
     try:
         fn = {"run_py": run_py, "run_db_py": run_db_py, "run_ipynb": run_ipynb}[
             subcommand
         ]
-        result = fn(file_path, executor, timeout=timeout)
+        try:
+            result = fn(file_path, executor, timeout=timeout)
+        except Exception as e:
+            result = ExecutionResult(status="error", error=str(e))
         write_output(result, file_path, output_dir)
     finally:
         executor.destroy_context()
@@ -370,7 +374,10 @@ def cli_run_ipynb() -> None:
             except Exception as e:
                 result = ExecutionResult(status="error", error=str(e))
         else:
-            result = run_ipynb(file_path, executor, timeout=timeout)
+            try:
+                result = run_ipynb(file_path, executor, timeout=timeout)
+            except Exception as e:
+                result = ExecutionResult(status="error", error=str(e))
         write_output(result, file_path, output_dir)
     finally:
         executor.destroy_context()
