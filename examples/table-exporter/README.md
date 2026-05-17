@@ -1,7 +1,8 @@
 # table-exporter
 
 Example project demonstrating the Skinny Notebook Wrapper + Pure Python pattern
-with `jupyter-databricks-kernel`.
+with `jupyter-databricks-kernel`. It exports an existing Databricks table to
+DBFS or S3 without creating, replacing, or dropping the source table.
 
 ## Project Structure
 

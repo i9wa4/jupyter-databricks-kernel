@@ -32,8 +32,8 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 1. Install the kernel:
 
    ```bash
-   pip install jupyter-databricks-kernel
-   python -m jupyter_databricks_kernel.install
+   uv add jupyter-databricks-kernel
+   uv run python -m jupyter_databricks_kernel.install
    ```
 
    Install options:
@@ -191,7 +191,6 @@ If the cluster is stopped, kernel startup may take 5-6 minutes. Increase
 jupyter execute notebook.ipynb --kernel_name=databricks --startup_timeout=600
 ```
 
-
 ### 5.3. Runner CLI (`run-py`, `run-db-py`, `run-ipynb`)
 
 Execute scripts and notebooks directly without launching Jupyter:
@@ -226,7 +225,7 @@ on Databricks clusters.
 Install papermill:
 
 ```bash
-pip install papermill
+uv add papermill
 ```
 
 Run a notebook with parameter injection:
@@ -294,22 +293,6 @@ File sync may be uploading unnecessary files. Check your sync settings:
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and guidelines.
 
-## 10. Examples
-
-The `examples/` directory contains sample projects demonstrating recommended
-patterns for structuring Databricks projects with this kernel.
-
-### table-exporter
-
-A complete example using the **Skinny Notebook Wrapper + Pure Python** pattern:
-
-- `launcher.ipynb` — thin 3-cell notebook (parameters → env vars → run)
-- `main.py` — entry point callable locally and from Databricks Jobs
-- `common/` — parameter handling and validation (no Databricks dependencies)
-- `processors/` — business logic using Spark/dbutils
-
-See [examples/table-exporter/README.md](./examples/table-exporter/README.md).
-
-## 11. License
+## 10. License
 
 Apache License 2.0

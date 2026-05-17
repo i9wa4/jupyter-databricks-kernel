@@ -12,20 +12,6 @@ if TYPE_CHECKING:
     from .executor import DatabricksExecutor, ExecutionResult
 
 
-def _sync_preamble(executor: DatabricksExecutor) -> None:
-    """Sync local project files to the cluster and configure sys.path."""
-    import uuid
-
-    from .sync import FileSync
-
-    file_sync = FileSync(executor.config, str(uuid.uuid4())[:8])
-    stats = file_sync.sync(executor=executor)
-    setup_code = file_sync.get_setup_code(stats.cluster_zip_path)
-    setup_result = executor.execute(setup_code)
-    if setup_result.status == "error":
-        raise RuntimeError(f"FileSync setup failed: {setup_result.error}")
-
-
 def run_py(
     path: Path,
     executor: DatabricksExecutor,
@@ -41,7 +27,6 @@ def run_py(
     Returns:
         ExecutionResult from the cluster.
     """
-    _sync_preamble(executor)
     code = path.read_text(encoding="utf-8")
     return executor.execute(code, timeout=timeout)
 
@@ -64,7 +49,6 @@ def run_db_py(
     Returns:
         ExecutionResult from the cluster.
     """
-    _sync_preamble(executor)
     code = path.read_text(encoding="utf-8")
     return executor.execute(code, timeout=timeout)
 
@@ -87,7 +71,6 @@ def run_ipynb(
     Returns:
         Summary ExecutionResult with combined output from all cells.
     """
-    _sync_preamble(executor)
     with open(path, encoding="utf-8") as f:
         notebook: dict[str, Any] = json.load(f)
 
@@ -141,7 +124,6 @@ def _run_ipynb_inplace(
     Returns:
         Summary ExecutionResult with combined output from all cells.
     """
-    _sync_preamble(executor)
     backup = path.with_suffix(path.suffix + ".bak")
     shutil.copy2(path, backup)
 
@@ -278,15 +260,11 @@ def _cli_dispatch(subcommand: str) -> None:
     config = Config.load()
     executor = DatabricksExecutor(config)
     executor.create_context()
-    from .executor import ExecutionResult
     try:
         fn = {"run_py": run_py, "run_db_py": run_db_py, "run_ipynb": run_ipynb}[
             subcommand
         ]
-        try:
-            result = fn(file_path, executor, timeout=timeout)
-        except Exception as e:
-            result = ExecutionResult(status="error", error=str(e))
+        result = fn(file_path, executor, timeout=timeout)
         write_output(result, file_path, output_dir)
     finally:
         executor.destroy_context()
@@ -374,10 +352,7 @@ def cli_run_ipynb() -> None:
             except Exception as e:
                 result = ExecutionResult(status="error", error=str(e))
         else:
-            try:
-                result = run_ipynb(file_path, executor, timeout=timeout)
-            except Exception as e:
-                result = ExecutionResult(status="error", error=str(e))
+            result = run_ipynb(file_path, executor, timeout=timeout)
         write_output(result, file_path, output_dir)
     finally:
         executor.destroy_context()

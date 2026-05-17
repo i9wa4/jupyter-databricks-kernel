@@ -4,7 +4,7 @@ This directory contains sample projects using jupyter-databricks-kernel.
 
 ## table-exporter
 
-Basic project structure for exporting Databricks tables to S3.
+Basic project structure for exporting Databricks tables to DBFS or S3.
 
 **Features:**
 
@@ -28,7 +28,7 @@ See: [table-exporter/README.md](./table-exporter/README.md)
 
    ```bash
    export TABLE_NAME='`catalog`.schema.table'
-   export OUTPUT_PATH='s3://bucket/path/'
+   export OUTPUT_PATH='dbfs:/tmp/table-exporter/output'
    ```
 
 3. Run:
