@@ -155,6 +155,59 @@ class TestSanitizePathComponent:
         assert not result.endswith(".")
 
 
+class TestFileSyncAttribution:
+    """Tests for FileSync WorkspaceClient attribution."""
+
+    def test_default_caller_is_package_name(self, mock_config: MagicMock) -> None:
+        file_sync = FileSync(mock_config, "test-session")
+        assert file_sync.caller == "jupyter-databricks-kernel"
+
+    def test_custom_caller_is_stored(self, mock_config: MagicMock) -> None:
+        file_sync = FileSync(mock_config, "test-session", caller="test-caller")
+        assert file_sync.caller == "test-caller"
+
+    def test_caller_passed_to_workspace_client_as_product(
+        self, mock_config: MagicMock
+    ) -> None:
+        from jupyter_databricks_kernel import __version__
+
+        with patch("jupyter_databricks_kernel.sync.WorkspaceClient") as mock_ws_cls:
+            file_sync = FileSync(mock_config, "test-session", caller="test-caller")
+            file_sync._ensure_client()
+
+        mock_ws_cls.assert_called_once_with(
+            product="test-caller",
+            product_version=__version__,
+        )
+
+    def test_default_caller_passed_to_workspace_client(
+        self, mock_config: MagicMock
+    ) -> None:
+        from jupyter_databricks_kernel import __version__
+
+        with patch("jupyter_databricks_kernel.sync.WorkspaceClient") as mock_ws_cls:
+            file_sync = FileSync(mock_config, "test-session")
+            file_sync._ensure_client()
+
+        mock_ws_cls.assert_called_once_with(
+            product="jupyter-databricks-kernel",
+            product_version=__version__,
+        )
+
+    def test_injected_client_bypasses_caller_attribution(
+        self, mock_config: MagicMock, mock_workspace_client: MagicMock
+    ) -> None:
+        file_sync = FileSync(
+            mock_config,
+            "test-session",
+            client=mock_workspace_client,
+            caller="test-caller",
+        )
+        result = file_sync._ensure_client()
+
+        assert result is mock_workspace_client
+
+
 class TestShouldExclude:
     """Tests for _should_exclude method with pathspec patterns."""
 

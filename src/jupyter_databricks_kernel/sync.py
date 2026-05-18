@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 import pathspec
 from databricks.sdk import WorkspaceClient
 
+from . import __version__
+
 if TYPE_CHECKING:
     from .config import Config
     from .executor import DatabricksExecutor
@@ -377,6 +379,7 @@ class FileSync:
         config: Config,
         session_id: str,
         client: WorkspaceClient | None = None,
+        caller: str = "jupyter-databricks-kernel",
     ) -> None:
         """Initialize file sync.
 
@@ -385,11 +388,14 @@ class FileSync:
             session_id: Session identifier for DBFS paths.
             client: Optional WorkspaceClient instance for dependency injection.
                 If not provided, a client will be created lazily when needed.
+            caller: Identifier for the calling tool, used for execution
+                attribution in Databricks audit logs via the User-Agent header.
         """
         import re
 
         self.config = config
         self.client = client
+        self.caller = caller
         # Validate session_id format to prevent path traversal
         if not re.match(r"^[a-zA-Z0-9_-]+$", session_id):
             raise ValueError(f"Invalid session_id format: {session_id}")
@@ -408,7 +414,10 @@ class FileSync:
             The WorkspaceClient instance.
         """
         if self.client is None:
-            self.client = WorkspaceClient()
+            self.client = WorkspaceClient(
+                product=self.caller,
+                product_version=__version__,
+            )
         return self.client
 
     def _sanitize_path_component(self, value: str) -> str:
