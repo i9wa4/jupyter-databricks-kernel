@@ -115,6 +115,27 @@ def test_main_reads_environment_parameters(monkeypatch, table_exporter_modules) 
     ]
 
 
+def test_main_defaults_file_format_to_json(monkeypatch, table_exporter_modules) -> None:
+    main, _validator = table_exporter_modules
+    calls: list[dict[str, str]] = []
+
+    monkeypatch.setenv("TABLE_NAME", "catalog.schema.table")
+    monkeypatch.setenv("OUTPUT_PATH", "s3://bucket/path")
+    monkeypatch.delenv("FILE_FORMAT", raising=False)
+    monkeypatch.setattr(main, "run", lambda **kwargs: calls.append(kwargs))
+
+    main.main()
+
+    assert calls == [
+        {
+            "table_name": "catalog.schema.table",
+            "output_path": "s3://bucket/path",
+            "file_format": "json",
+            "where_clause": "",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     "path",
     [

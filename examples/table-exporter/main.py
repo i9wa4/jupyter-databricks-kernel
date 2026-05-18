@@ -47,7 +47,7 @@ def main(
     run(
         table_name=table_name or get_required_param("table_name"),
         output_path=output_path or get_required_param("output_path"),
-        file_format=file_format or get_param("file_format", "parquet"),
+        file_format=file_format or get_param("file_format", "json"),
         where_clause=where_clause or get_param("where_clause", ""),
     )
 
