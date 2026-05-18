@@ -18,7 +18,7 @@ import stat
 import tempfile
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,6 +47,14 @@ DEFAULT_EXCLUDE_PATTERNS = [
     ".venv",
     CACHE_FILE_NAME,  # Exclude legacy cache file in project root
 ]
+
+# The Command Execution API accepts the Python command as a string. Keep each
+# Base64 payload below 1 MiB with room for the Python wrapper and path text.
+COMMAND_API_MAX_COMMAND_BYTES = 1024 * 1024
+COMMAND_API_COMMAND_HEADROOM_BYTES = 64 * 1024
+COMMAND_API_BINARY_CHUNK_SIZE = (
+    (COMMAND_API_MAX_COMMAND_BYTES - COMMAND_API_COMMAND_HEADROOM_BYTES) // 4
+) * 3
 
 
 def get_cache_dir() -> Path:
@@ -85,6 +93,43 @@ def get_project_hash(source_path: Path) -> str:
     """
     abs_path = str(source_path.resolve())
     return hashlib.sha256(abs_path.encode()).hexdigest()[:16]
+
+
+def count_command_api_base64_chunks(size_bytes: int) -> int:
+    """Count how many Command API chunks are needed for a payload size."""
+    return max(
+        1,
+        (size_bytes + COMMAND_API_BINARY_CHUNK_SIZE - 1)
+        // COMMAND_API_BINARY_CHUNK_SIZE,
+    )
+
+
+def iter_command_api_base64_chunks(zip_data: bytes) -> Iterator[str]:
+    """Encode zip data in independently decodable Base64 chunks.
+
+    Each binary chunk is sized so the encoded text plus command wrapper stays
+    under the expected Command API command-size budget.
+    """
+    if not zip_data:
+        yield ""
+        return
+    for i in range(0, len(zip_data), COMMAND_API_BINARY_CHUNK_SIZE):
+        yield base64.b64encode(zip_data[i : i + COMMAND_API_BINARY_CHUNK_SIZE]).decode(
+            "ascii"
+        )
+
+
+def build_command_api_chunk_write_command(
+    cluster_zip_path: str,
+    chunk_b64: str,
+    mode: str,
+) -> str:
+    """Build a remote command that writes one decoded chunk to the zip file."""
+    return f'''
+import base64
+with open("{cluster_zip_path}", "{mode}") as f:
+    f.write(base64.b64decode("{chunk_b64}"))
+'''
 
 
 class FileSizeError(Exception):
@@ -778,11 +823,7 @@ class FileSync:
         # Upload via Command API (chunked Base64 transfer)
         client = self._ensure_client()
 
-        # 3 × 2^18 bytes per binary chunk → each encodes to exactly 1 MiB of
-        # Base64 with no internal padding, so the cluster can decode each chunk
-        # independently without needing an intermediate .b64 accumulator file.
-        chunk_size_bytes = 786432
-        num_chunks = max(1, (len(zip_data) + chunk_size_bytes - 1) // chunk_size_bytes)
+        num_chunks = count_command_api_base64_chunks(len(zip_data))
 
         # Use executor's context if provided, otherwise create minimal execution context
         context_id: str | None
@@ -841,16 +882,12 @@ print(target_dir)
             raise ValueError(f"Invalid directory path from cluster: {actual_dir}")
         cluster_zip_path = f"{actual_dir}/project.zip"
 
-        # Send chunks via Command API — encode locally, decode directly on cluster
-        for i in range(num_chunks):
-            binary_chunk = zip_data[i * chunk_size_bytes : (i + 1) * chunk_size_bytes]
-            chunk_b64 = base64.b64encode(binary_chunk).decode("ascii")
+        # Send chunks via Command API — decode directly on cluster.
+        for i, chunk_b64 in enumerate(iter_command_api_base64_chunks(zip_data)):
             mode = "wb" if i == 0 else "ab"
-            code = f'''
-import base64
-with open("{cluster_zip_path}", "{mode}") as f:
-    f.write(base64.b64decode("{chunk_b64}"))
-'''
+            code = build_command_api_chunk_write_command(
+                cluster_zip_path, chunk_b64, mode
+            )
             result = client.command_execution.execute(
                 cluster_id=self.config.cluster_id,
                 context_id=context_id,
