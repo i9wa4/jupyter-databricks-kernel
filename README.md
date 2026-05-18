@@ -206,7 +206,8 @@ pip install papermill
 Run a notebook with parameter injection:
 
 ```bash
-papermill input.ipynb output.ipynb --kernel databricks -p param1 value1 -p param2 value2
+papermill input.ipynb output.ipynb --kernel databricks \
+  -p param1 value1 -p param2 value2
 ```
 
 Do NOT use the `--inplace` flag with papermill. Papermill is designed to
@@ -216,32 +217,40 @@ outputs; `--inplace` overwrites the source notebook and defeats this purpose.
 If the cluster is stopped, increase the startup timeout:
 
 ```bash
-papermill input.ipynb output.ipynb --kernel databricks --start_timeout 600 -p param1 value1
+papermill input.ipynb output.ipynb --kernel databricks \
+  --start_timeout 600 -p param1 value1
 ```
 
-## 7. MCP Server Integration
+## 7. MCP Server Usage Pattern
 
-`jupyter-databricks-kernel` can serve as the execution engine behind an
-MCP (Model Context Protocol) server, enabling AI agents to run Python on
-Databricks clusters without requiring direct workspace credentials on the
-client side.
+`jupyter-databricks-kernel` can be used by an external MCP (Model Context
+Protocol) server as its Databricks execution dependency. This repository does
+not ship an MCP server, Databricks App, HTTP adapter, or MCP tool definition.
 
-### 7.1. Architecture
+### 7.1. External Server Responsibilities
 
-A companion MCP server (deployed as a Databricks App) is deployed once per
-Databricks workspace. It holds the workspace Service Principal credentials
-and exposes an `execute_python` tool via MCP. The kernel package's
-`DatabricksExecutor` class is imported by this server as its execution
-engine.
+A companion MCP server can be deployed once per Databricks workspace. That
+server owns:
 
-Per-session isolation: `DatabricksExecutor` maintains a `context_id` per
-session. The HTTP adapter keeps a `session_store` keyed by `session_id`
-with a 30-minute idle TTL, giving each caller an isolated execution context.
+- Workspace authentication and Service Principal credentials
+- MCP transport and tool definitions
+- HTTP routing, if the server exposes an HTTP adapter
+- Session storage and timeout policy
+- Any output file persistence outside the command result returned by this
+  package
 
-### 7.2. Per-Project Configuration
+The server can import `DatabricksExecutor` from this package to run code on a
+configured all-purpose cluster. It should keep one executor per active client
+session when isolated command contexts are required.
 
-Projects that use AI-driven execution create a config file at
-`.databricks/config.json` in the project root:
+### 7.2. Project Routing
+
+If a companion server supports multiple workspaces, keep workspace routing in
+the companion server configuration. A project-local routing file such as
+`.databricks/config.json` can be used by that server, but it is external to this
+package's public API.
+
+Example external routing shape:
 
 ```json
 {
@@ -250,23 +259,20 @@ Projects that use AI-driven execution create a config file at
 }
 ```
 
-`mcp_profile` maps to a named entry in the AI agent's global config
-(`~/.claude.json` or equivalent). It is the sole workspace identity —
-`workspace_url` is intentionally omitted to avoid two sources of truth.
+In this pattern, `mcp_profile` maps to a named companion server entry in the AI
+agent's global config. Avoid duplicating workspace identity in both
+`mcp_profile` and `workspace_url`; choose one source of truth in the companion
+server.
 
-Switching workspace means switching `mcp_profile` — no credential changes
-needed.
+### 7.3. Execution Flow
 
-### 7.3. AI Execution Flow
-
-1. AI agent reads `.databricks/config.json` to determine `mcp_profile` and
-   `cluster_id`
-2. AI agent calls `execute_python` on the MCP server identified by
-   `mcp_profile`
-3. The MCP server routes the request through `DatabricksExecutor`
-4. Result is returned to the AI agent
-5. AI agent writes output to `outputs/<filename>.output.md` (for `.py`
-   files) or updates the notebook in-place (for `.ipynb`)
+1. The AI agent selects the companion MCP server for the target workspace.
+2. The companion server maps the request to a Databricks cluster.
+3. The companion server calls `DatabricksExecutor` from this package.
+4. `DatabricksExecutor` executes code through the Databricks Command Execution
+   API and returns the result.
+5. The companion server or AI agent decides whether and where to persist the
+   returned output.
 
 ## 8. Known Limitations
 
