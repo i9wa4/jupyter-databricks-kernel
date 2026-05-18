@@ -149,9 +149,11 @@ The extraction directory can also be set via the
 priority over `pyproject.toml`.
 
 By default, files are extracted to
-`/tmp/jupyter_databricks_kernel/<project>/` on the cluster driver node,
-where `<project>` is derived from the local project root directory name.
-This single path works uniformly for user accounts and service principals.
+`/tmp/jupyter_databricks_kernel/<project>-<hash>/` on the cluster driver node,
+where `<project>` is derived from the local project root directory name and
+`<hash>` is derived from the project root path. This single path works
+uniformly for user accounts and service principals while avoiding collisions
+between different projects with the same directory name.
 
 [sdk-auth]: https://docs.databricks.com/en/dev-tools/sdk-python.html#authentication
 [vscode-jupyter]: https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter

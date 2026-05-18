@@ -1090,6 +1090,44 @@ class TestGetSetupSteps:
         # Path must be under /tmp/jupyter_databricks_kernel/
         assert "/tmp/jupyter_databricks_kernel/" in prepare_code
 
+    def test_default_path_includes_project_hash(
+        self, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """Test that default path includes a project-root hash."""
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        mock_config.base_path = project_root
+        file_sync = FileSync(mock_config, "test-session-id")
+
+        steps = file_sync.get_setup_steps("/tmp/test/project.zip")
+
+        prepare_code = steps[0][1]
+        expected_path = (
+            f"/tmp/jupyter_databricks_kernel/project-{get_project_hash(project_root)}"
+        )
+        assert expected_path in prepare_code
+
+    def test_same_project_names_get_distinct_default_paths(
+        self, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """Test that same-name project roots do not share default paths."""
+        first_root = tmp_path / "first" / "project"
+        second_root = tmp_path / "second" / "project"
+        first_root.mkdir(parents=True)
+        second_root.mkdir(parents=True)
+
+        mock_config.base_path = first_root
+        first_sync = FileSync(mock_config, "first-session")
+        first_prepare_code = first_sync.get_setup_steps("/tmp/test/project.zip")[0][1]
+
+        mock_config.base_path = second_root
+        second_sync = FileSync(mock_config, "second-session")
+        second_prepare_code = second_sync.get_setup_steps("/tmp/test/project.zip")[0][1]
+
+        assert f"project-{get_project_hash(first_root)}" in first_prepare_code
+        assert f"project-{get_project_hash(second_root)}" in second_prepare_code
+        assert first_prepare_code != second_prepare_code
+
     def test_cluster_zip_path_in_code(self, mock_file_sync: FileSync) -> None:
         """Test that zip path is correctly embedded in generated code."""
         cluster_zip_path = "/tmp/test/project.zip"

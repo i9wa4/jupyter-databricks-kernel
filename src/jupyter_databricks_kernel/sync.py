@@ -984,10 +984,12 @@ del _extract_dir, _cluster_zip_path, _local_zip
 
         from pathlib import Path
 
-        project = self._sanitize_path_component(
-            self.config.base_path.name if self.config.base_path else Path.cwd().name
+        project_root = self.config.base_path if self.config.base_path else Path.cwd()
+        project = self._sanitize_path_component(project_root.name)
+        project_hash = get_project_hash(project_root)
+        workspace_extract_dir = (
+            f"/tmp/jupyter_databricks_kernel/{project}-{project_hash}"
         )
-        workspace_extract_dir = f"/tmp/jupyter_databricks_kernel/{project}"
 
         return [
             (
