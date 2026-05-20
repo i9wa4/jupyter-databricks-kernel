@@ -527,3 +527,155 @@ class TestConfigBasePath:
 
         config = Config.load(config_path=custom_config)
         assert config.base_path == custom_dir
+
+
+class TestMcpProfile:
+    """Tests for mcp_profile loading (M1)."""
+
+    def test_default_mcp_profile_is_none(self) -> None:
+        """Test that mcp_profile defaults to None."""
+        config = Config()
+        assert config.mcp_profile is None
+
+    def test_load_mcp_profile_from_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test loading mcp_profile from DATABRICKS_MCP_PROFILE env var."""
+        monkeypatch.setenv("DATABRICKS_MCP_PROFILE", "my-profile")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load()
+        assert config.mcp_profile == "my-profile"
+
+    def test_load_mcp_profile_from_databrickscfg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test loading mcp_profile from ~/.databrickscfg."""
+        databrickscfg = tmp_path / ".databrickscfg"
+        databrickscfg.write_text("""
+[DEFAULT]
+cluster_id = cfg-cluster-123
+mcp_profile = cfg-profile
+""")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.delenv("DATABRICKS_MCP_PROFILE", raising=False)
+        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
+
+        config = Config.load()
+        assert config.mcp_profile == "cfg-profile"
+
+    def test_env_overrides_databrickscfg_mcp_profile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test env var takes priority over databrickscfg for mcp_profile."""
+        databrickscfg = tmp_path / ".databrickscfg"
+        databrickscfg.write_text("""
+[DEFAULT]
+mcp_profile = cfg-profile
+""")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DATABRICKS_MCP_PROFILE", "env-profile")
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+
+        config = Config.load()
+        assert config.mcp_profile == "env-profile"
+
+
+class TestDatabricksConfigJson:
+    """Tests for .databricks/config.json loader (M2)."""
+
+    def test_load_from_databricks_config_json(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test loading cluster_id and mcp_profile from .databricks/config.json."""
+        config_dir = tmp_path / ".databricks"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text(
+            '{"mcp_profile": "json-profile", "cluster_id": "json-cluster"}'
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.delenv("DATABRICKS_MCP_PROFILE", raising=False)
+
+        config = Config.load()
+        assert config.cluster_id == "json-cluster"
+        assert config.mcp_profile == "json-profile"
+
+    def test_workspace_url_raises_value_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that workspace_url in config.json raises ValueError."""
+        config_dir = tmp_path / ".databricks"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text(
+            '{"workspace_url": "https://example.databricks.com", "cluster_id": "x"}'
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.delenv("DATABRICKS_MCP_PROFILE", raising=False)
+
+        with pytest.raises(ValueError, match="workspace_url"):
+            Config.load()
+
+    def test_env_overrides_config_json(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test env var takes priority over .databricks/config.json."""
+        config_dir = tmp_path / ".databricks"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text(
+            '{"cluster_id": "json-cluster", "mcp_profile": "json-profile"}'
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DATABRICKS_CLUSTER_ID", "env-cluster")
+        monkeypatch.setenv("DATABRICKS_MCP_PROFILE", "env-profile")
+
+        config = Config.load()
+        assert config.cluster_id == "env-cluster"
+        assert config.mcp_profile == "env-profile"
+
+    def test_databrickscfg_overrides_config_json(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test ~/.databrickscfg takes priority over .databricks/config.json."""
+        config_dir = tmp_path / ".databricks"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text(
+            '{"cluster_id": "json-cluster", "mcp_profile": "json-profile"}'
+        )
+        databrickscfg = tmp_path / ".databrickscfg"
+        databrickscfg.write_text("""
+[DEFAULT]
+cluster_id = cfg-cluster
+mcp_profile = cfg-profile
+""")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.delenv("DATABRICKS_MCP_PROFILE", raising=False)
+        monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
+
+        config = Config.load()
+        assert config.cluster_id == "cfg-cluster"
+        assert config.mcp_profile == "cfg-profile"
+
+    def test_config_json_not_found_is_noop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that missing .databricks/config.json is silently ignored."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.delenv("DATABRICKS_MCP_PROFILE", raising=False)
+
+        config = Config.load()
+        assert config.cluster_id is None
+        assert config.mcp_profile is None
