@@ -36,7 +36,7 @@
         }:
         let
           ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
-          projectPython = pkgs.python313;
+          projectPython = pkgs.python311;
           rumdlConfig = pkgs.writeText "rumdl.toml" ''
             [MD013]
             code-blocks = false
