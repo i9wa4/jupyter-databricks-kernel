@@ -628,3 +628,61 @@ class TestClusterStateWithFixture:
         mock_client_cluster_terminated.clusters.wait_get_cluster_running.assert_called_once_with(
             "test-cluster-id"
         )
+
+
+class TestCallerAttribution:
+    """Tests for execution attribution via the caller parameter."""
+
+    def test_default_caller_is_package_name(self, mock_config: MagicMock) -> None:
+        """Test that the default caller is jupyter-databricks-kernel."""
+        executor = DatabricksExecutor(mock_config)
+        assert executor.caller == "jupyter-databricks-kernel"
+
+    def test_custom_caller_is_stored(self, mock_config: MagicMock) -> None:
+        """Test that a custom caller identifier is stored."""
+        executor = DatabricksExecutor(mock_config, caller="my-mcp-server")
+        assert executor.caller == "my-mcp-server"
+
+    def test_caller_passed_to_workspace_client_as_product(
+        self, mock_config: MagicMock
+    ) -> None:
+        """Test that caller is passed as product to WorkspaceClient."""
+        from unittest.mock import patch
+
+        from jupyter_databricks_kernel import __version__
+
+        with patch("jupyter_databricks_kernel.executor.WorkspaceClient") as mock_ws_cls:
+            executor = DatabricksExecutor(mock_config, caller="test-caller")
+            executor._ensure_client()
+
+        mock_ws_cls.assert_called_once_with(
+            product="test-caller",
+            product_version=__version__,
+        )
+
+    def test_default_caller_passed_to_workspace_client(
+        self, mock_config: MagicMock
+    ) -> None:
+        """Test that the default caller passes package name as product."""
+        from unittest.mock import patch
+
+        from jupyter_databricks_kernel import __version__
+
+        with patch("jupyter_databricks_kernel.executor.WorkspaceClient") as mock_ws_cls:
+            executor = DatabricksExecutor(mock_config)
+            executor._ensure_client()
+
+        mock_ws_cls.assert_called_once_with(
+            product="jupyter-databricks-kernel",
+            product_version=__version__,
+        )
+
+    def test_injected_client_bypasses_caller_attribution(
+        self, mock_config: MagicMock, mock_workspace_client: MagicMock
+    ) -> None:
+        """Test that a pre-injected client is used without re-creating it."""
+        executor = DatabricksExecutor(
+            mock_config, client=mock_workspace_client, caller="test-caller"
+        )
+        result = executor._ensure_client()
+        assert result is mock_workspace_client

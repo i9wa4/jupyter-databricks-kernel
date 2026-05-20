@@ -15,6 +15,8 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service import compute
 from databricks.sdk.service.compute import ResultType
 
+from . import __version__
+
 if TYPE_CHECKING:
     from .config import Config
 
@@ -63,6 +65,7 @@ class DatabricksExecutor:
         self,
         config: Config,
         client: WorkspaceClient | None = None,
+        caller: str = "jupyter-databricks-kernel",
     ) -> None:
         """Initialize the executor.
 
@@ -70,9 +73,14 @@ class DatabricksExecutor:
             config: Kernel configuration.
             client: Optional WorkspaceClient instance for dependency injection.
                 If not provided, a client will be created lazily when needed.
+            caller: Identifier for the calling tool, used for execution
+                attribution in Databricks audit logs via the User-Agent header.
+                Defaults to "jupyter-databricks-kernel". MCP servers and CLI
+                tools should pass their own identifier.
         """
         self.config = config
         self.client = client
+        self.caller = caller
         self.context_id: str | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
@@ -82,7 +90,10 @@ class DatabricksExecutor:
             The WorkspaceClient instance.
         """
         if self.client is None:
-            self.client = WorkspaceClient()
+            self.client = WorkspaceClient(
+                product=self.caller,
+                product_version=__version__,
+            )
         return self.client
 
     def _ensure_cluster_running(self) -> None:
