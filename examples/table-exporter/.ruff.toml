@@ -1,0 +1,2 @@
+[lint.per-file-ignores]
+"*.ipynb" = ["F821"]  # Undefined name (dbutils, spark injected by Databricks)

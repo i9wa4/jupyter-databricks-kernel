@@ -99,6 +99,13 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
 If the cluster is stopped, the first execution may take 5-6 minutes while
 the cluster starts.
 
+## Examples
+
+See [examples/](./examples/) for sample projects:
+
+- [table-exporter](./examples/table-exporter/) — Skinny notebook wrapper with
+  pure Python business logic for exporting an existing Databricks table.
+
 ## 4. Configuration
 
 ### 4.1. Cluster ID
