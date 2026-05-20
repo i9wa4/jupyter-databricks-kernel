@@ -117,7 +117,7 @@
               # === Dependency lock validation ===
               uv-lock-check = {
                 enable = true;
-                entry = "${pkgs.uv}/bin/uv lock --check";
+                entry = "${pkgs.uv}/bin/uv lock --check --no-managed-python --python ${pkgs.python3}/bin/python3";
                 files = "^(pyproject\\.toml|uv\\.lock)$";
                 pass_filenames = false;
               };
