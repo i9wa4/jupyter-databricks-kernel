@@ -279,9 +279,21 @@ session when isolated command contexts are required.
 ### 7.2. Project Routing
 
 If a companion server supports multiple workspaces, keep workspace routing in
-the companion server configuration. A project-local routing file such as
-`.databricks/config.json` can be used by that server, but it is external to this
-package's public API.
+the companion server configuration. This package can also read a project-local
+`.databricks/config.json` file as local routing metadata for `mcp_profile` and
+`cluster_id`.
+
+The `.databricks/` directory is also used by the Databricks CLI for local sync
+snapshots, bundle state, variable overrides, and generated artifacts. Keep this
+file limited to the top-level routing shape below, do not store companion-server
+state under CLI-managed subdirectories such as `.databricks/bundle/`, and do not
+rely on `.databricks/` for files that must be synchronized to the cluster. This
+package's file synchronization excludes `.databricks/` to match Databricks CLI
+behavior.
+
+Databricks CLI authentication remains in the normal Databricks configuration
+locations, such as `~/.databrickscfg` or the CLI token cache, not in this
+project routing file.
 
 Example external routing shape:
 
