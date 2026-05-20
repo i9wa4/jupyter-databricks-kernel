@@ -2,22 +2,30 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
 from jupyter_databricks_kernel.sync import (
     CACHE_FILE_NAME,
+    COMMAND_API_BINARY_CHUNK_SIZE,
+    COMMAND_API_COMMAND_HEADROOM_BYTES,
+    COMMAND_API_MAX_COMMAND_BYTES,
     DEFAULT_EXCLUDE_PATTERNS,
     FileCache,
     FileSizeError,
     FileSync,
     SyncStats,
+    build_command_api_chunk_write_command,
+    count_command_api_base64_chunks,
     get_cache_dir,
     get_project_hash,
+    iter_command_api_base64_chunks,
 )
 
 
@@ -1247,32 +1255,99 @@ class TestGetUserName:
 class TestCommandAPITransfer:
     """Tests for Command API-based file transfer with Base64 encoding."""
 
-    def test_base64_chunk_splitting(self, mock_file_sync: FileSync) -> None:
-        """Test that Base64 data is split into 1MB chunks correctly."""
-        import base64
+    def test_direct_base64_chunks_reconstruct_original_bytes(self) -> None:
+        """Test that each chunk is independently decodable."""
+        test_data = b"x" * (COMMAND_API_BINARY_CHUNK_SIZE + 17)
 
-        # Create test data that will be ~2.5MB after Base64 encoding
-        test_data = b"x" * (2 * 1024 * 1024)  # 2MB
-        encoded = base64.b64encode(test_data).decode("utf-8")
+        chunks = list(iter_command_api_base64_chunks(test_data))
 
-        # Split into chunks (same logic as sync())
-        chunk_size = 1024 * 1024  # 1MB
-        chunks = [
-            encoded[i : i + chunk_size] for i in range(0, len(encoded), chunk_size)
+        assert len(chunks) == 2
+        assert b"".join(base64.b64decode(chunk) for chunk in chunks) == test_data
+
+    def test_chunk_size_leaves_command_wrapper_headroom(self) -> None:
+        """Test that generated commands stay under the command-size budget."""
+        chunk_b64 = next(
+            iter_command_api_base64_chunks(b"x" * COMMAND_API_BINARY_CHUNK_SIZE)
+        )
+        command = build_command_api_chunk_write_command(
+            "/tmp/jupyter_databricks_kernel_test-session/project.zip",
+            chunk_b64,
+            "wb",
+        )
+
+        assert len(chunk_b64.encode("ascii")) <= (
+            COMMAND_API_MAX_COMMAND_BYTES - COMMAND_API_COMMAND_HEADROOM_BYTES
+        )
+        assert len(command.encode("utf-8")) < COMMAND_API_MAX_COMMAND_BYTES
+
+    def test_sync_writes_decoded_chunks_directly_to_zip(
+        self, mock_file_sync: FileSync, tmp_path: Path
+    ) -> None:
+        """Test sync writes decoded chunks without a remote .b64 accumulator."""
+        payload = b"z" * (COMMAND_API_BINARY_CHUNK_SIZE + 23)
+        test_file = tmp_path / "test.py"
+        test_file.write_text("print('test')\n")
+        mock_file_sync.config.base_path = tmp_path
+
+        fake_cache = MagicMock()
+        fake_cache.get_changed_files.return_value = (
+            [test_file],
+            SyncStats(changed_files=1, changed_size=len(payload)),
+            {test_file: "hash"},
+        )
+        fake_cache.get_deleted_files.return_value = []
+
+        mock_file_sync._get_all_files = Mock(return_value=[test_file])
+        mock_file_sync._get_file_cache = Mock(return_value=fake_cache)
+        mock_file_sync._create_zip = Mock(return_value=payload)
+
+        result = MagicMock()
+        from databricks.sdk.service import compute
+
+        result.status = compute.CommandStatus.FINISHED
+        result.results = MagicMock()
+        result.results.cause = None
+        result.results.data = "/tmp/jupyter_databricks_kernel_test-session"
+        execute_response = mock_file_sync.client.command_execution.execute.return_value
+        execute_response.result.return_value = result
+
+        stats = mock_file_sync.sync()
+
+        commands = [
+            call.kwargs["command"]
+            for call in mock_file_sync.client.command_execution.execute.call_args_list
+        ]
+        chunk_commands = [
+            command for command in commands if "base64.b64decode" in command
         ]
 
-        # Should have 3 chunks (2MB * 4/3 ≈ 2.67MB -> 3 chunks)
-        assert len(chunks) == 3
-        assert len(chunks[0]) == chunk_size
-        assert len(chunks[1]) == chunk_size
-        assert len(chunks[2]) < chunk_size
+        assert stats.cluster_zip_path.endswith("/project.zip")
+        assert len(chunk_commands) == count_command_api_base64_chunks(len(payload))
+        assert "project.zip.b64" not in "\n".join(commands)
+        assert "os.remove" not in "\n".join(chunk_commands)
+        assert (
+            'open("/tmp/jupyter_databricks_kernel_test-session/project.zip", "wb")'
+            in chunk_commands[0]
+        )
+        assert (
+            'open("/tmp/jupyter_databricks_kernel_test-session/project.zip", "ab")'
+            in chunk_commands[1]
+        )
+        assert all(
+            len(command.encode("utf-8")) < COMMAND_API_MAX_COMMAND_BYTES
+            for command in chunk_commands
+        )
+
+        encoded_chunks = [
+            re.search(r'base64\.b64decode\("([^"]*)"\)', command).group(1)
+            for command in chunk_commands
+        ]
+        assert b"".join(base64.b64decode(chunk) for chunk in encoded_chunks) == payload
 
     def test_executor_context_sharing(
         self, mock_file_sync: FileSync, tmp_path: Path
     ) -> None:
         """Test that executor context is shared between sync and setup."""
-        from unittest.mock import MagicMock, Mock
-
         # Create mock executor with context_id
         mock_executor = Mock()
         mock_executor.context_id = "test-context-123"
@@ -1338,8 +1413,6 @@ print(target_dir)
         self, mock_file_sync: FileSync, tmp_path: Path
     ) -> None:
         """Test Command API error handling via result.results.cause."""
-        from unittest.mock import MagicMock, Mock
-
         import pytest
 
         # Mock WorkspaceClient and command_execution
