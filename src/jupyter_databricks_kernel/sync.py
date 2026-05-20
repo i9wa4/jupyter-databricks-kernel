@@ -6,6 +6,7 @@ directory. When use_gitignore is enabled, .gitignore patterns are also applied.
 
 from __future__ import annotations
 
+import base64
 import functools
 import hashlib
 import io
@@ -17,13 +18,15 @@ import stat
 import tempfile
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pathspec
 from databricks.sdk import WorkspaceClient
+
+from . import __version__
 
 if TYPE_CHECKING:
     from .config import Config
@@ -46,6 +49,14 @@ DEFAULT_EXCLUDE_PATTERNS = [
     ".venv",
     CACHE_FILE_NAME,  # Exclude legacy cache file in project root
 ]
+
+# The Command Execution API accepts the Python command as a string. Keep each
+# Base64 payload below 1 MiB with room for the Python wrapper and path text.
+COMMAND_API_MAX_COMMAND_BYTES = 1024 * 1024
+COMMAND_API_COMMAND_HEADROOM_BYTES = 64 * 1024
+COMMAND_API_BINARY_CHUNK_SIZE = (
+    (COMMAND_API_MAX_COMMAND_BYTES - COMMAND_API_COMMAND_HEADROOM_BYTES) // 4
+) * 3
 
 
 def get_cache_dir() -> Path:
@@ -84,6 +95,43 @@ def get_project_hash(source_path: Path) -> str:
     """
     abs_path = str(source_path.resolve())
     return hashlib.sha256(abs_path.encode()).hexdigest()[:16]
+
+
+def count_command_api_base64_chunks(size_bytes: int) -> int:
+    """Count how many Command API chunks are needed for a payload size."""
+    return max(
+        1,
+        (size_bytes + COMMAND_API_BINARY_CHUNK_SIZE - 1)
+        // COMMAND_API_BINARY_CHUNK_SIZE,
+    )
+
+
+def iter_command_api_base64_chunks(zip_data: bytes) -> Iterator[str]:
+    """Encode zip data in independently decodable Base64 chunks.
+
+    Each binary chunk is sized so the encoded text plus command wrapper stays
+    under the expected Command API command-size budget.
+    """
+    if not zip_data:
+        yield ""
+        return
+    for i in range(0, len(zip_data), COMMAND_API_BINARY_CHUNK_SIZE):
+        yield base64.b64encode(zip_data[i : i + COMMAND_API_BINARY_CHUNK_SIZE]).decode(
+            "ascii"
+        )
+
+
+def build_command_api_chunk_write_command(
+    cluster_zip_path: str,
+    chunk_b64: str,
+    mode: str,
+) -> str:
+    """Build a remote command that writes one decoded chunk to the zip file."""
+    return f'''
+import base64
+with open("{cluster_zip_path}", "{mode}") as f:
+    f.write(base64.b64decode("{chunk_b64}"))
+'''
 
 
 class FileSizeError(Exception):
@@ -377,6 +425,7 @@ class FileSync:
         config: Config,
         session_id: str,
         client: WorkspaceClient | None = None,
+        caller: str = "jupyter-databricks-kernel",
     ) -> None:
         """Initialize file sync.
 
@@ -385,11 +434,14 @@ class FileSync:
             session_id: Session identifier for DBFS paths.
             client: Optional WorkspaceClient instance for dependency injection.
                 If not provided, a client will be created lazily when needed.
+            caller: Identifier for the calling tool, used for execution
+                attribution in Databricks audit logs via the User-Agent header.
         """
         import re
 
         self.config = config
         self.client = client
+        self.caller = caller
         # Validate session_id format to prevent path traversal
         if not re.match(r"^[a-zA-Z0-9_-]+$", session_id):
             raise ValueError(f"Invalid session_id format: {session_id}")
@@ -407,7 +459,10 @@ class FileSync:
             The WorkspaceClient instance.
         """
         if self.client is None:
-            self.client = WorkspaceClient()
+            self.client = WorkspaceClient(
+                product=self.caller,
+                product_version=__version__,
+            )
         return self.client
 
     def _sanitize_path_component(self, value: str) -> str:
@@ -753,16 +808,8 @@ class FileSync:
 
         # Upload via Command API (chunked Base64 transfer)
         client = self._ensure_client()
-        import base64
 
-        # Encode to Base64
-        zip_b64 = base64.b64encode(zip_data).decode("utf-8")
-
-        # Split into 1MB chunks
-        chunk_size = 1024 * 1024
-        chunks = [
-            zip_b64[i : i + chunk_size] for i in range(0, len(zip_b64), chunk_size)
-        ]
+        num_chunks = count_command_api_base64_chunks(len(zip_data))
 
         # Use executor's context if provided, otherwise create minimal execution context
         context_id: str | None
@@ -820,18 +867,13 @@ print(target_dir)
         if not re.match(r"^/tmp/jupyter_databricks_kernel_[a-zA-Z0-9_-]+$", actual_dir):
             raise ValueError(f"Invalid directory path from cluster: {actual_dir}")
         cluster_zip_path = f"{actual_dir}/project.zip"
-        tmp_b64_path = f"{actual_dir}/project.zip.b64"
 
-        # Send chunks via Command API
-        for i, chunk in enumerate(chunks):
-            mode = "w" if i == 0 else "a"
-            # Escape quotes in chunk for Python string
-            chunk_escaped = chunk.replace("\\", "\\\\").replace('"', '\\"')
-            code = f'''
-with open("{tmp_b64_path}", "{mode}") as f:
-    f.write("{chunk_escaped}")
-'''
-            # Execute chunk write
+        # Send chunks via Command API — decode directly on cluster.
+        for i, chunk_b64 in enumerate(iter_command_api_base64_chunks(zip_data)):
+            mode = "wb" if i == 0 else "ab"
+            code = build_command_api_chunk_write_command(
+                cluster_zip_path, chunk_b64, mode
+            )
             result = client.command_execution.execute(
                 cluster_id=self.config.cluster_id,
                 context_id=context_id,
@@ -841,43 +883,16 @@ with open("{tmp_b64_path}", "{mode}") as f:
 
             if result and result.results and result.results.cause:
                 raise RuntimeError(
-                    f"Chunk {i + 1}/{len(chunks)} failed: {result.results.cause}"
+                    f"Chunk {i + 1}/{num_chunks} failed: {result.results.cause}"
                 )
             if result and result.status != compute.CommandStatus.FINISHED:
                 raise RuntimeError(
-                    f"Chunk {i + 1}/{len(chunks)} transfer failed: "
+                    f"Chunk {i + 1}/{num_chunks} transfer failed: "
                     f"status={result.status}"
                 )
 
             if on_progress:
-                on_progress(f"Transferred chunk {i + 1}/{len(chunks)}...")
-
-        # Decode Base64 on cluster
-        decode_code = f'''
-import base64
-import os
-with open("{tmp_b64_path}", "r") as f:
-    b64_data = f.read()
-decoded = base64.b64decode(b64_data)
-with open("{cluster_zip_path}", "wb") as f:
-    f.write(decoded)
-os.remove("{tmp_b64_path}")
-'''
-
-        result = client.command_execution.execute(
-            cluster_id=self.config.cluster_id,
-            context_id=context_id,
-            language=compute.Language.PYTHON,
-            command=decode_code,
-        ).result(timeout=timedelta(minutes=5))
-
-        # Check for errors in result.results.cause (Python exceptions)
-        if result and result.results and result.results.cause:
-            raise RuntimeError(f"Base64 decode failed: {result.results.cause}")
-        if result and result.status != compute.CommandStatus.FINISHED:
-            raise RuntimeError(
-                f"Base64 decode failed on cluster: status={result.status}"
-            )
+                on_progress(f"Transferred chunk {i + 1}/{num_chunks}...")
 
         # Remove deleted files from cache
         deleted_files = file_cache.get_deleted_files(all_files)

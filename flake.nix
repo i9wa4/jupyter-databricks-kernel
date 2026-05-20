@@ -36,6 +36,7 @@
         }:
         let
           ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
+          projectPython = pkgs.python311;
           rumdlConfig = pkgs.writeText "rumdl.toml" ''
             [MD013]
             code-blocks = false
@@ -48,10 +49,11 @@
           devShells = {
             default = pkgs.mkShell {
               packages = [
+                projectPython
                 pkgs.uv
               ];
               shellHook = ''
-                uv sync --frozen
+                uv sync --frozen --no-managed-python --python ${projectPython}/bin/python3
                 ${config.pre-commit.installationScript}
               '';
             };
@@ -113,6 +115,14 @@
               check-merge-conflicts.enable = true;
               check-json.enable = true;
               check-yaml.enable = true;
+
+              # === Dependency lock validation ===
+              uv-lock-check = {
+                enable = true;
+                entry = "${pkgs.uv}/bin/uv lock --check --no-managed-python --python ${projectPython}/bin/python3";
+                files = "^(pyproject\\.toml|uv\\.lock)$";
+                pass_filenames = false;
+              };
 
               # === Secrets detection ===
               gitleaks = {
