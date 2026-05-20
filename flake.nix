@@ -114,6 +114,14 @@
               check-json.enable = true;
               check-yaml.enable = true;
 
+              # === Dependency lock validation ===
+              uv-lock-check = {
+                enable = true;
+                entry = "${pkgs.uv}/bin/uv lock --check";
+                files = "^(pyproject\\.toml|uv\\.lock)$";
+                pass_filenames = false;
+              };
+
               # === Secrets detection ===
               gitleaks = {
                 enable = true;
