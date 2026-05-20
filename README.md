@@ -114,6 +114,8 @@ Cluster ID is read from (in order of priority):
 
 1. `DATABRICKS_CLUSTER_ID` environment variable
 2. `~/.databrickscfg` (from active profile)
+3. `.databricks/jupyter-databricks-kernel.json` project routing config
+   (`.databricks/config.json` legacy fallback)
 
 Active profile is determined by `DATABRICKS_CONFIG_PROFILE` environment
 variable, or `DEFAULT` if not set.
@@ -280,22 +282,28 @@ session when isolated command contexts are required.
 
 If a companion server supports multiple workspaces, keep workspace routing in
 the companion server configuration. This package can also read a project-local
-`.databricks/config.json` file as local routing metadata for `mcp_profile` and
-`cluster_id`.
+`.databricks/jupyter-databricks-kernel.json` file as local routing metadata for
+`mcp_profile` and `cluster_id`.
 
 The `.databricks/` directory is also used by the Databricks CLI for local sync
 snapshots, bundle state, variable overrides, and generated artifacts. Keep this
-file limited to the top-level routing shape below, do not store companion-server
-state under CLI-managed subdirectories such as `.databricks/bundle/`, and do not
-rely on `.databricks/` for files that must be synchronized to the cluster. This
-package's file synchronization excludes `.databricks/` to match Databricks CLI
-behavior.
+package-owned file limited to the top-level routing shape below, do not store
+companion-server state under CLI-managed subdirectories such as
+`.databricks/bundle/`, and do not rely on `.databricks/` for files that must be
+synchronized to the cluster. This package's file synchronization excludes
+`.databricks/` to match Databricks CLI behavior.
+
+The older `.databricks/config.json` path is still read as a compatibility
+fallback for projects that adopted the initial runner configuration, but new
+projects should use `.databricks/jupyter-databricks-kernel.json`. The
+package-owned filename avoids treating generic `config.json` as this package's
+permanent claim inside the Databricks CLI local namespace.
 
 Databricks CLI authentication remains in the normal Databricks configuration
 locations, such as `~/.databrickscfg` or the CLI token cache, not in this
 project routing file.
 
-Example external routing shape:
+Example external routing file at `.databricks/jupyter-databricks-kernel.json`:
 
 ```json
 {
@@ -311,12 +319,15 @@ server.
 
 ### 7.3. Execution Flow
 
-1. The AI agent selects the companion MCP server for the target workspace.
-2. The companion server maps the request to a Databricks cluster.
-3. The companion server calls `DatabricksExecutor` from this package.
-4. `DatabricksExecutor` executes code through the Databricks Command Execution
+1. The AI agent reads project routing from
+   `.databricks/jupyter-databricks-kernel.json` or the legacy
+   `.databricks/config.json` fallback.
+2. The AI agent calls the companion MCP server identified by `mcp_profile`.
+3. The companion server maps the request to a Databricks cluster.
+4. The companion server calls `DatabricksExecutor` from this package.
+5. `DatabricksExecutor` executes code through the Databricks Command Execution
    API and returns the result.
-5. The companion server or AI agent decides whether and where to persist the
+6. The companion server or AI agent decides whether and where to persist the
    returned output.
 
 ## 8. Known Limitations

@@ -12,6 +12,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+CANONICAL_PROJECT_CONFIG_PATH = Path(".databricks") / "jupyter-databricks-kernel.json"
+LEGACY_PROJECT_CONFIG_PATH = Path(".databricks") / "config.json"
+PROJECT_CONFIG_PATHS = (CANONICAL_PROJECT_CONFIG_PATH, LEGACY_PROJECT_CONFIG_PATH)
+
 
 @dataclass
 class SyncConfig:
@@ -60,18 +64,27 @@ class Config:
         return None
 
     @staticmethod
-    def _find_databricks_config_json() -> Path | None:
-        """Find .databricks/config.json in current or parent directories.
+    def _find_project_config_json() -> Path | None:
+        """Find project routing config JSON in current or parent directories.
 
         Returns:
-            Path to .databricks/config.json if found, None otherwise.
+            Path to project routing config JSON if found, None otherwise.
         """
         current = Path.cwd()
         for directory in [current] + list(current.parents):
-            candidate = directory / ".databricks" / "config.json"
-            if candidate.exists():
-                logger.debug("Found .databricks/config.json at %s", candidate)
-                return candidate
+            for relative_path in PROJECT_CONFIG_PATHS:
+                candidate = directory / relative_path
+                if candidate.exists():
+                    if relative_path == LEGACY_PROJECT_CONFIG_PATH:
+                        logger.warning(
+                            "Found legacy project routing config at %s; use %s "
+                            "instead.",
+                            candidate,
+                            directory / CANONICAL_PROJECT_CONFIG_PATH,
+                        )
+                    else:
+                        logger.debug("Found project routing config at %s", candidate)
+                    return candidate
         return None
 
     @classmethod
@@ -81,7 +94,8 @@ class Config:
         Priority order for cluster_id and mcp_profile:
         1. Environment variables (highest priority)
         2. ~/.databrickscfg (from active profile)
-        3. .databricks/config.json (project-local, lowest priority)
+        3. .databricks/jupyter-databricks-kernel.json
+           (.databricks/config.json legacy fallback)
 
         Sync settings are loaded from pyproject.toml.
 
@@ -108,11 +122,11 @@ class Config:
         if config.cluster_id is None or config.mcp_profile is None:
             config._load_from_databrickscfg()
 
-        # Load from .databricks/config.json if fields still not set
+        # Load from project-local routing config if fields still not set
         if config.cluster_id is None or config.mcp_profile is None:
-            databricks_config = cls._find_databricks_config_json()
-            if databricks_config is not None:
-                config._load_from_databricks_config_json(databricks_config)
+            project_config = cls._find_project_config_json()
+            if project_config is not None:
+                config._load_from_project_config_json(project_config)
 
         # Search for pyproject.toml if not explicitly provided
         if config_path is None:
@@ -176,11 +190,11 @@ class Config:
                 "MCP profile from databrickscfg [%s]: %s", profile, self.mcp_profile
             )
 
-    def _load_from_databricks_config_json(self, path: Path) -> None:
-        """Load cluster_id and mcp_profile from .databricks/config.json.
+    def _load_from_project_config_json(self, path: Path) -> None:
+        """Load cluster_id and mcp_profile from project routing config JSON.
 
         Args:
-            path: Path to .databricks/config.json.
+            path: Path to project routing config JSON.
 
         Raises:
             ValueError: If config contains workspace_url (intentionally absent
