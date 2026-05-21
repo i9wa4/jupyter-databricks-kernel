@@ -13,8 +13,6 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 CANONICAL_PROJECT_CONFIG_PATH = Path(".databricks") / "jupyter-databricks-kernel.json"
-LEGACY_PROJECT_CONFIG_PATH = Path(".databricks") / "config.json"
-PROJECT_CONFIG_PATHS = (CANONICAL_PROJECT_CONFIG_PATH, LEGACY_PROJECT_CONFIG_PATH)
 
 
 @dataclass
@@ -72,19 +70,10 @@ class Config:
         """
         current = Path.cwd()
         for directory in [current] + list(current.parents):
-            for relative_path in PROJECT_CONFIG_PATHS:
-                candidate = directory / relative_path
-                if candidate.exists():
-                    if relative_path == LEGACY_PROJECT_CONFIG_PATH:
-                        logger.warning(
-                            "Found legacy project routing config at %s; use %s "
-                            "instead.",
-                            candidate,
-                            directory / CANONICAL_PROJECT_CONFIG_PATH,
-                        )
-                    else:
-                        logger.debug("Found project routing config at %s", candidate)
-                    return candidate
+            candidate = directory / CANONICAL_PROJECT_CONFIG_PATH
+            if candidate.exists():
+                logger.debug("Found project routing config at %s", candidate)
+                return candidate
         return None
 
     @classmethod
@@ -95,7 +84,6 @@ class Config:
         1. Environment variables (highest priority)
         2. ~/.databrickscfg (from active profile)
         3. .databricks/jupyter-databricks-kernel.json
-           (.databricks/config.json legacy fallback)
 
         Sync settings are loaded from pyproject.toml.
 

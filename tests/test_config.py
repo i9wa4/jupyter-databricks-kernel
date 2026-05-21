@@ -607,14 +607,14 @@ class TestDatabricksProjectConfigJson:
         assert config.cluster_id == "json-cluster"
         assert config.mcp_profile == "json-profile"
 
-    def test_load_from_legacy_databricks_config_json(
+    def test_generic_databricks_config_json_is_not_project_routing_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test loading from legacy .databricks/config.json fallback."""
+        """Test .databricks/config.json is not read as project routing config."""
         config_dir = tmp_path / ".databricks"
         config_dir.mkdir()
         (config_dir / "config.json").write_text(
-            '{"mcp_profile": "legacy-profile", "cluster_id": "legacy-cluster"}'
+            '{"mcp_profile": "generic-profile", "cluster_id": "generic-cluster"}'
         )
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.chdir(tmp_path)
@@ -622,29 +622,8 @@ class TestDatabricksProjectConfigJson:
         monkeypatch.delenv("DATABRICKS_MCP_PROFILE", raising=False)
 
         config = Config.load()
-        assert config.cluster_id == "legacy-cluster"
-        assert config.mcp_profile == "legacy-profile"
-
-    def test_canonical_project_config_overrides_legacy_config_json(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test canonical project config is preferred over legacy config.json."""
-        config_dir = tmp_path / ".databricks"
-        config_dir.mkdir()
-        (config_dir / "config.json").write_text(
-            '{"mcp_profile": "legacy-profile", "cluster_id": "legacy-cluster"}'
-        )
-        (config_dir / "jupyter-databricks-kernel.json").write_text(
-            '{"mcp_profile": "canonical-profile", "cluster_id": "canonical-cluster"}'
-        )
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
-        monkeypatch.delenv("DATABRICKS_MCP_PROFILE", raising=False)
-
-        config = Config.load()
-        assert config.cluster_id == "canonical-cluster"
-        assert config.mcp_profile == "canonical-profile"
+        assert config.cluster_id is None
+        assert config.mcp_profile is None
 
     def test_workspace_url_raises_value_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

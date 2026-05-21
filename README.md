@@ -115,7 +115,6 @@ Cluster ID is read from (in order of priority):
 1. `DATABRICKS_CLUSTER_ID` environment variable
 2. `~/.databrickscfg` (from active profile)
 3. `.databricks/jupyter-databricks-kernel.json` project routing config
-   (`.databricks/config.json` legacy fallback)
 
 Active profile is determined by `DATABRICKS_CONFIG_PROFILE` environment
 variable, or `DEFAULT` if not set.
@@ -293,11 +292,9 @@ companion-server state under CLI-managed subdirectories such as
 synchronized to the cluster. This package's file synchronization excludes
 `.databricks/` to match Databricks CLI behavior.
 
-The older `.databricks/config.json` path is still read as a compatibility
-fallback for projects that adopted the initial runner configuration, but new
-projects should use `.databricks/jupyter-databricks-kernel.json`. The
-package-owned filename avoids treating generic `config.json` as this package's
-permanent claim inside the Databricks CLI local namespace.
+Generic `.databricks/config.json` is not read. The package-owned filename avoids
+treating generic `config.json` as this package's claim inside the Databricks CLI
+local namespace.
 
 Databricks CLI authentication remains in the normal Databricks configuration
 locations, such as `~/.databrickscfg` or the CLI token cache, not in this
@@ -325,7 +322,6 @@ Configuration precedence is field-by-field:
    `DATABRICKS_MCP_PROFILE`
 2. `~/.databrickscfg` from the active Databricks profile
 3. `.databricks/jupyter-databricks-kernel.json`
-4. Legacy fallback: `.databricks/config.json`
 
 If the JSON above is present and no higher-priority value is set,
 `Config.load()` selects cluster `0123-456789-abcdef12` and profile
@@ -357,8 +353,7 @@ choose one source of truth in the companion server.
 ### 7.3. Execution Flow
 
 1. The AI agent reads project routing from
-   `.databricks/jupyter-databricks-kernel.json` or the legacy
-   `.databricks/config.json` fallback.
+   `.databricks/jupyter-databricks-kernel.json`.
 2. The AI agent calls the companion MCP server identified by `mcp_profile`.
 3. The companion server maps the request to a Databricks cluster.
 4. The companion server calls `DatabricksExecutor` from this package.
