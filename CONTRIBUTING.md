@@ -121,13 +121,13 @@ During development, you may want to test the kernel locally:
 uv run python -m jupyter_databricks_kernel.install
 
 # Verify installation
-jupyter kernelspec list
+uv run jupyter kernelspec list
 ```
 
 To uninstall:
 
 ```bash
-jupyter kernelspec uninstall databricks-session
+uv run jupyter kernelspec uninstall databricks
 ```
 
 ## 6. Using Development Version in Another Project
@@ -165,12 +165,10 @@ uv sync  # Re-syncs the editable install
 **Note**: You must restart the Jupyter kernel after updating to
 load the new code.
 
-### 6.2. With pip
-
-Install in editable mode:
+### 6.2. With uv add
 
 ```bash
-pip install -e /path/to/jupyter-databricks-kernel
+uv add --dev --editable /path/to/jupyter-databricks-kernel
 ```
 
 ### 6.3. Verifying the Version
