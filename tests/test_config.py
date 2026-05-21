@@ -586,16 +586,16 @@ mcp_profile = cfg-profile
         assert config.mcp_profile == "env-profile"
 
 
-class TestDatabricksConfigJson:
-    """Tests for .databricks/config.json loader (M2)."""
+class TestDatabricksProjectConfigJson:
+    """Tests for project routing config JSON loader (M2)."""
 
-    def test_load_from_databricks_config_json(
+    def test_load_from_canonical_project_config_json(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test loading cluster_id and mcp_profile from .databricks/config.json."""
+        """Test loading from .databricks/jupyter-databricks-kernel.json."""
         config_dir = tmp_path / ".databricks"
         config_dir.mkdir()
-        (config_dir / "config.json").write_text(
+        (config_dir / "jupyter-databricks-kernel.json").write_text(
             '{"mcp_profile": "json-profile", "cluster_id": "json-cluster"}'
         )
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -607,13 +607,31 @@ class TestDatabricksConfigJson:
         assert config.cluster_id == "json-cluster"
         assert config.mcp_profile == "json-profile"
 
-    def test_workspace_url_raises_value_error(
+    def test_generic_databricks_config_json_is_not_project_routing_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test that workspace_url in config.json raises ValueError."""
+        """Test .databricks/config.json is not read as project routing config."""
         config_dir = tmp_path / ".databricks"
         config_dir.mkdir()
         (config_dir / "config.json").write_text(
+            '{"mcp_profile": "generic-profile", "cluster_id": "generic-cluster"}'
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)
+        monkeypatch.delenv("DATABRICKS_MCP_PROFILE", raising=False)
+
+        config = Config.load()
+        assert config.cluster_id is None
+        assert config.mcp_profile is None
+
+    def test_workspace_url_raises_value_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that workspace_url in project config raises ValueError."""
+        config_dir = tmp_path / ".databricks"
+        config_dir.mkdir()
+        (config_dir / "jupyter-databricks-kernel.json").write_text(
             '{"workspace_url": "https://example.databricks.com", "cluster_id": "x"}'
         )
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -627,10 +645,10 @@ class TestDatabricksConfigJson:
     def test_env_overrides_config_json(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test env var takes priority over .databricks/config.json."""
+        """Test env var takes priority over project config JSON."""
         config_dir = tmp_path / ".databricks"
         config_dir.mkdir()
-        (config_dir / "config.json").write_text(
+        (config_dir / "jupyter-databricks-kernel.json").write_text(
             '{"cluster_id": "json-cluster", "mcp_profile": "json-profile"}'
         )
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -645,10 +663,10 @@ class TestDatabricksConfigJson:
     def test_databrickscfg_overrides_config_json(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test ~/.databrickscfg takes priority over .databricks/config.json."""
+        """Test ~/.databrickscfg takes priority over project config JSON."""
         config_dir = tmp_path / ".databricks"
         config_dir.mkdir()
-        (config_dir / "config.json").write_text(
+        (config_dir / "jupyter-databricks-kernel.json").write_text(
             '{"cluster_id": "json-cluster", "mcp_profile": "json-profile"}'
         )
         databrickscfg = tmp_path / ".databrickscfg"
@@ -670,7 +688,7 @@ mcp_profile = cfg-profile
     def test_config_json_not_found_is_noop(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test that missing .databricks/config.json is silently ignored."""
+        """Test that missing project config JSON is silently ignored."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("DATABRICKS_CLUSTER_ID", raising=False)

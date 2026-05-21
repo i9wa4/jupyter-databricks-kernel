@@ -114,6 +114,7 @@ Cluster ID is read from (in order of priority):
 
 1. `DATABRICKS_CLUSTER_ID` environment variable
 2. `~/.databrickscfg` (from active profile)
+3. `.databricks/jupyter-databricks-kernel.json` project routing config
 
 Active profile is determined by `DATABRICKS_CONFIG_PROFILE` environment
 variable, or `DEFAULT` if not set.
@@ -239,7 +240,8 @@ uv add papermill
 Run a notebook with parameter injection:
 
 ```bash
-papermill input.ipynb output.ipynb --kernel databricks -p param1 value1 -p param2 value2
+papermill input.ipynb output.ipynb --kernel databricks \
+  -p param1 value1 -p param2 value2
 ```
 
 Do NOT use the `--inplace` flag with papermill. Papermill is designed to
@@ -249,18 +251,126 @@ outputs; `--inplace` overwrites the source notebook and defeats this purpose.
 If the cluster is stopped, increase the startup timeout:
 
 ```bash
-papermill input.ipynb output.ipynb --kernel databricks --start_timeout 600 -p param1 value1
+papermill input.ipynb output.ipynb --kernel databricks \
+  --start_timeout 600 -p param1 value1
 ```
 
-## 7. Known Limitations
+## 7. MCP Server Usage Pattern
+
+`jupyter-databricks-kernel` can be used by an external MCP (Model Context
+Protocol) server as its Databricks execution dependency. This repository does
+not ship an MCP server, Databricks App, HTTP adapter, or MCP tool definition.
+
+### 7.1. External Server Responsibilities
+
+A companion MCP server can be deployed once per Databricks workspace. That
+server owns:
+
+- Workspace authentication and Service Principal credentials
+- MCP transport and tool definitions
+- HTTP routing, if the server exposes an HTTP adapter
+- Session storage and timeout policy
+- Any output file persistence outside the command result returned by this
+  package
+
+The server can import `DatabricksExecutor` from this package to run code on a
+configured all-purpose cluster. It should keep one executor per active client
+session when isolated command contexts are required.
+
+### 7.2. Project Routing
+
+If a companion server supports multiple workspaces, keep workspace routing in
+the companion server configuration. This package can also read a project-local
+`.databricks/jupyter-databricks-kernel.json` file as local routing metadata for
+`mcp_profile` and `cluster_id`.
+
+The `.databricks/` directory is also used by the Databricks CLI for local sync
+snapshots, bundle state, variable overrides, and generated artifacts. Keep this
+package-owned file limited to the top-level routing shape below, do not store
+companion-server state under CLI-managed subdirectories such as
+`.databricks/bundle/`, and do not rely on `.databricks/` for files that must be
+synchronized to the cluster. This package's file synchronization excludes
+`.databricks/` to match Databricks CLI behavior.
+
+Generic `.databricks/config.json` is not read. The package-owned filename avoids
+treating generic `config.json` as this package's claim inside the Databricks CLI
+local namespace.
+
+Databricks CLI authentication remains in the normal Databricks configuration
+locations, such as `~/.databrickscfg` or the CLI token cache, not in this
+project routing file.
+
+Example external routing file at `.databricks/jupyter-databricks-kernel.json`:
+
+```json
+{
+  "mcp_profile": "databricks-prod",
+  "cluster_id": "0123-456789-abcdef12"
+}
+```
+
+Only two routing fields are read:
+
+| Field         | Effect |
+| ------------- | ------ |
+| `cluster_id`  | Sets `Config.cluster_id`; the Jupyter kernel, runner CLI, or companion server uses it as the target all-purpose cluster for `DatabricksExecutor`. |
+| `mcp_profile` | Sets `Config.mcp_profile`; the AI agent or companion adapter can use it to select the named MCP server/workspace profile. |
+
+Configuration precedence is field-by-field:
+
+1. Environment variables: `DATABRICKS_CLUSTER_ID` and
+   `DATABRICKS_MCP_PROFILE`
+2. `~/.databrickscfg` from the active Databricks profile
+3. `.databricks/jupyter-databricks-kernel.json`
+
+If the JSON above is present and no higher-priority value is set,
+`Config.load()` selects cluster `0123-456789-abcdef12` and profile
+`databricks-prod`. The runner commands and Jupyter kernel execute on that
+cluster, and an MCP-aware agent can call the companion server identified by
+`databricks-prod`.
+
+If the JSON is absent, the same fields fall back to environment variables and
+then `~/.databrickscfg`. If no source provides `cluster_id`, execution cannot
+choose a Databricks cluster until `cluster_id` is configured. If
+`DATABRICKS_CLUSTER_ID=dev-cluster` is set while the JSON contains
+`0123-456789-abcdef12`, the environment value wins and `dev-cluster` is used.
+
+This routing file does not configure authentication, store tokens, set
+`workspace_url`, create an MCP server, configure the Databricks CLI, configure
+Asset Bundles, or add files to cluster sync. Authentication remains in the
+normal Databricks SDK locations, such as environment variables,
+`~/.databrickscfg`, or the CLI token cache. Bundle state remains under
+CLI-managed paths such as `.databricks/bundle/`, and this package excludes
+`.databricks/` from synchronization.
+
+In this pattern, `mcp_profile` maps to a named companion server entry in the AI
+agent's global config. This makes a project directory self-routing for the
+intended MCP/Jupyter workflow: switching projects can switch the companion MCP
+profile and cluster without changing local credentials or editing notebook code.
+Avoid duplicating workspace identity in both `mcp_profile` and `workspace_url`;
+choose one source of truth in the companion server.
+
+### 7.3. Execution Flow
+
+1. The AI agent reads project routing from
+   `.databricks/jupyter-databricks-kernel.json`.
+2. The AI agent calls the companion MCP server identified by `mcp_profile`.
+3. The companion server maps the request to a Databricks cluster.
+4. The companion server calls `DatabricksExecutor` from this package.
+5. `DatabricksExecutor` executes code through the Databricks Command Execution
+   API and returns the result.
+6. The companion server or AI agent decides whether and where to persist the
+   returned output.
+
+## 8. Known Limitations
 
 - Serverless compute is not supported (Command Execution API limitation)
 - `input()` and interactive prompts do not work
 - Interactive widgets (ipywidgets) are not supported
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
-### 8.1. Kernel feels slow
+### 9.1. Kernel feels slow
 
 File sync may be uploading unnecessary files. Check your sync settings:
 
@@ -297,10 +407,10 @@ File sync may be uploading unnecessary files. Check your sync settings:
    enabled = false
    ```
 
-## 9. Development
+## 10. Development
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and guidelines.
 
-## 10. License
+## 11. License
 
 Apache License 2.0
