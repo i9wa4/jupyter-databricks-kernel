@@ -307,15 +307,52 @@ Example external routing file at `.databricks/jupyter-databricks-kernel.json`:
 
 ```json
 {
-  "mcp_profile": "<profile-name>",
-  "cluster_id": "<cluster-id>"
+  "mcp_profile": "databricks-prod",
+  "cluster_id": "0123-456789-abcdef12"
 }
 ```
 
+Only two routing fields are read:
+
+| Field         | Effect |
+| ------------- | ------ |
+| `cluster_id`  | Sets `Config.cluster_id`; the Jupyter kernel, runner CLI, or companion server uses it as the target all-purpose cluster for `DatabricksExecutor`. |
+| `mcp_profile` | Sets `Config.mcp_profile`; the AI agent or companion adapter can use it to select the named MCP server/workspace profile. |
+
+Configuration precedence is field-by-field:
+
+1. Environment variables: `DATABRICKS_CLUSTER_ID` and
+   `DATABRICKS_MCP_PROFILE`
+2. `~/.databrickscfg` from the active Databricks profile
+3. `.databricks/jupyter-databricks-kernel.json`
+4. Legacy fallback: `.databricks/config.json`
+
+If the JSON above is present and no higher-priority value is set,
+`Config.load()` selects cluster `0123-456789-abcdef12` and profile
+`databricks-prod`. The runner commands and Jupyter kernel execute on that
+cluster, and an MCP-aware agent can call the companion server identified by
+`databricks-prod`.
+
+If the JSON is absent, the same fields fall back to environment variables and
+then `~/.databrickscfg`. If no source provides `cluster_id`, execution cannot
+choose a Databricks cluster until `cluster_id` is configured. If
+`DATABRICKS_CLUSTER_ID=dev-cluster` is set while the JSON contains
+`0123-456789-abcdef12`, the environment value wins and `dev-cluster` is used.
+
+This routing file does not configure authentication, store tokens, set
+`workspace_url`, create an MCP server, configure the Databricks CLI, configure
+Asset Bundles, or add files to cluster sync. Authentication remains in the
+normal Databricks SDK locations, such as environment variables,
+`~/.databrickscfg`, or the CLI token cache. Bundle state remains under
+CLI-managed paths such as `.databricks/bundle/`, and this package excludes
+`.databricks/` from synchronization.
+
 In this pattern, `mcp_profile` maps to a named companion server entry in the AI
-agent's global config. Avoid duplicating workspace identity in both
-`mcp_profile` and `workspace_url`; choose one source of truth in the companion
-server.
+agent's global config. This makes a project directory self-routing for the
+intended MCP/Jupyter workflow: switching projects can switch the companion MCP
+profile and cluster without changing local credentials or editing notebook code.
+Avoid duplicating workspace identity in both `mcp_profile` and `workspace_url`;
+choose one source of truth in the companion server.
 
 ### 7.3. Execution Flow
 
