@@ -19,6 +19,7 @@ import tempfile
 import time
 import zipfile
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -285,6 +286,24 @@ class FileCache:
                 f, lambda: hashlib.md5(usedforsecurity=False)
             ).hexdigest()
 
+    @staticmethod
+    def _hash_worker_count(total_files: int) -> int:
+        """Choose a bounded worker count for parallel file hashing."""
+        if total_files <= 0:
+            return 1
+        default_workers = min(32, (os.cpu_count() or 1) + 4)
+        return min(total_files, default_workers)
+
+    def _compute_file_hash(
+        self, index: int, file_path: Path
+    ) -> tuple[int, Path, str | None, str | None]:
+        """Compute one file hash and return enough context for cache comparison."""
+        try:
+            rel_path = str(file_path.relative_to(self.source_path))
+            return index, file_path, rel_path, self.compute_hash(file_path)
+        except OSError:
+            return index, file_path, None, None
+
     def get_changed_files(
         self,
         files: list[Path],
@@ -309,13 +328,27 @@ class FileCache:
         computed_hashes: dict[str, str] = {}
         total = len(files)
 
-        for i, file_path in enumerate(files):
-            if on_progress:
-                on_progress(f"Hashing files... {i + 1}/{total}")
+        hash_results: list[tuple[int, Path, str | None, str | None] | None] = [
+            None
+        ] * total
+        max_workers = self._hash_worker_count(total)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(self._compute_file_hash, i, file_path)
+                for i, file_path in enumerate(files)
+            ]
+            for completed, future in enumerate(as_completed(futures), start=1):
+                if on_progress:
+                    on_progress(f"Hashing files... {completed}/{total}")
+                index, file_path, rel_path, current_hash = future.result()
+                hash_results[index] = (index, file_path, rel_path, current_hash)
 
-            try:
-                rel_path = str(file_path.relative_to(self.source_path))
-                current_hash = self.compute_hash(file_path)
+        for result in hash_results:
+            if result is None:
+                continue
+            _, file_path, rel_path, current_hash = result
+
+            if rel_path is not None and current_hash is not None:
                 computed_hashes[rel_path] = current_hash
                 cached_hash = self._cache.get(rel_path)
 
@@ -326,10 +359,13 @@ class FileCache:
                     if file_sizes and file_path in file_sizes:
                         stats.changed_size += file_sizes[file_path]
                     else:
-                        stats.changed_size += file_path.stat().st_size
+                        try:
+                            stats.changed_size += file_path.stat().st_size
+                        except OSError:
+                            pass
                 else:
                     stats.skipped_files += 1
-            except OSError:
+            else:
                 # File read error, treat as changed
                 changed.append(file_path)
                 stats.changed_files += 1
