@@ -346,6 +346,44 @@ class TestFileCache:
         assert stats.skipped_files == 1
         assert len(computed_hashes) == 2
 
+    def test_hash_worker_count_caps_to_files_and_default_workers(self) -> None:
+        """Test worker count is bounded by file count and Python's default cap."""
+        with patch("jupyter_databricks_kernel.sync.os.cpu_count", return_value=2):
+            assert FileCache._hash_worker_count(0) == 1
+            assert FileCache._hash_worker_count(3) == 3
+            assert FileCache._hash_worker_count(10) == 6
+
+    def test_get_changed_files_parallel_hashes_preserve_input_order(
+        self, tmp_path: Path
+    ) -> None:
+        """Test parallel hashing still returns changed files in input order."""
+        file1 = tmp_path / "file1.py"
+        file2 = tmp_path / "file2.py"
+        file3 = tmp_path / "file3.py"
+        file1.write_text("content1")
+        file2.write_text("content2")
+        file3.write_text("content3")
+
+        cache = FileCache(tmp_path)
+        progress: list[str] = []
+        files = [file3, file1, file2]
+
+        with patch.object(FileCache, "_hash_worker_count", return_value=2) as workers:
+            changed, stats, computed_hashes = cache.get_changed_files(
+                files, on_progress=progress.append
+            )
+
+        workers.assert_called_once_with(3)
+        assert changed == files
+        assert stats.changed_files == 3
+        assert stats.skipped_files == 0
+        assert computed_hashes.keys() == {"file1.py", "file2.py", "file3.py"}
+        assert progress == [
+            "Hashing files... 1/3",
+            "Hashing files... 2/3",
+            "Hashing files... 3/3",
+        ]
+
     def test_save_and_load_cache(self, tmp_path: Path) -> None:
         """Test cache persistence."""
         file1 = tmp_path / "file1.py"
