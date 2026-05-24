@@ -30,6 +30,8 @@ from databricks.sdk import WorkspaceClient
 from . import __version__
 
 if TYPE_CHECKING:
+    from pathspec.pattern import Pattern as PathSpecPattern
+
     from .config import Config
     from .executor import DatabricksExecutor
 
@@ -483,7 +485,7 @@ class FileSync:
             raise ValueError(f"Invalid session_id format: {session_id}")
         self.session_id = session_id
         self._synced = False
-        self._pathspec: pathspec.PathSpec | None = None
+        self._pathspec: pathspec.PathSpec[PathSpecPattern] | None = None
         self._pathspec_mtime: float = 0.0
         self._file_cache: FileCache | None = None
         self._command_context_id: str | None = None
@@ -538,7 +540,9 @@ class FileSync:
         base = self.config.base_path if self.config.base_path else Path.cwd()
         return base / source
 
-    def _load_gitignore_spec(self, source_path: Path) -> pathspec.PathSpec:
+    def _load_gitignore_spec(
+        self, source_path: Path
+    ) -> pathspec.PathSpec[PathSpecPattern]:
         """Load and cache the combined PathSpec from default and configured patterns.
 
         This method combines patterns from:
@@ -749,7 +753,12 @@ class FileSync:
         source_path = self._get_source_path()
         zip_buffer = io.BytesIO()
 
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(
+            zip_buffer,
+            "w",
+            zipfile.ZIP_DEFLATED,
+            compresslevel=self.config.sync.compression_level,
+        ) as zf:
             if files is not None:
                 # Use pre-computed file list (avoids duplicate os.walk)
                 for file_path in files:

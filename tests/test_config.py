@@ -20,6 +20,7 @@ class TestSyncConfigDefaults:
         assert config.exclude == []
         assert config.max_size_mb is None
         assert config.max_file_size_mb is None
+        assert config.compression_level is None
         assert config.use_gitignore is True
         assert config.workspace_extract_dir is None
 
@@ -59,6 +60,7 @@ source = "./src"
 exclude = ["*.log", "data/"]
 max_size_mb = 100.0
 max_file_size_mb = 10.0
+compression_level = 1
 use_gitignore = true
 """)
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -74,6 +76,7 @@ use_gitignore = true
         assert config.sync.exclude == ["*.log", "data/"]
         assert config.sync.max_size_mb == 100.0
         assert config.sync.max_file_size_mb == 10.0
+        assert config.sync.compression_level == 1
         assert config.sync.use_gitignore is True
 
     def test_load_missing_pyproject(
@@ -247,19 +250,32 @@ class TestConfigValidate:
         config = Config()  # cluster_id not set
         config.sync.max_size_mb = -1
         config.sync.max_file_size_mb = 0
+        config.sync.compression_level = 10
         errors = config.validate()
-        assert len(errors) == 3
+        assert len(errors) == 4
         assert any("Cluster ID is not configured" in e for e in errors)
         assert any("max_size_mb" in e for e in errors)
         assert any("max_file_size_mb" in e for e in errors)
+        assert any("compression_level" in e for e in errors)
 
-    def test_validate_positive_values_pass(self) -> None:
-        """Test validation passes with positive size values."""
+    @pytest.mark.parametrize("compression_level", [0, 9])
+    def test_validate_positive_values_pass(self, compression_level: int) -> None:
+        """Test validation passes with valid size and compression values."""
         config = Config(cluster_id="test-cluster")
         config.sync.max_size_mb = 100.0
         config.sync.max_file_size_mb = 10.0
+        config.sync.compression_level = compression_level
         errors = config.validate()
         assert len(errors) == 0
+
+    @pytest.mark.parametrize("compression_level", [-1, 10, 1.5, True])
+    def test_validate_compression_level(self, compression_level: object) -> None:
+        """Test validation fails when compression_level is outside 0-9."""
+        config = Config(cluster_id="test-cluster")
+        config.sync.compression_level = compression_level  # type: ignore[assignment]
+        errors = config.validate()
+        assert len(errors) == 1
+        assert "compression_level must be an integer from 0 to 9" in errors[0]
 
 
 class TestConfigLoadFromDatabrickscfg:

@@ -7,7 +7,7 @@ import json
 import os
 import re
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
 
@@ -1006,6 +1006,43 @@ class TestSkipNonRegularFiles:
                 sock.close()
         finally:
             shutil.rmtree(test_dir, ignore_errors=True)
+
+
+class TestCreateZip:
+    """Tests for _create_zip archive construction."""
+
+    @pytest.mark.parametrize("compression_level", [None, 1])
+    def test_create_zip_passes_compression_level_to_zipfile(
+        self,
+        compression_level: int | None,
+        mock_config: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Test that _create_zip passes compression level through to zipfile."""
+        import zipfile
+
+        mock_config.sync.source = str(tmp_path)
+        mock_config.sync.exclude = []
+        mock_config.sync.compression_level = compression_level
+        mock_config.base_path = tmp_path
+        file_sync = FileSync(mock_config, "test-session")
+
+        regular_file = tmp_path / "regular.py"
+        regular_file.write_text("print('hello')")
+
+        with patch("jupyter_databricks_kernel.sync.zipfile.ZipFile") as zip_file:
+            file_sync._create_zip([regular_file])
+
+        zip_file.assert_called_once_with(
+            ANY,
+            "w",
+            zipfile.ZIP_DEFLATED,
+            compresslevel=compression_level,
+        )
+        zip_file.return_value.__enter__.return_value.write.assert_called_once_with(
+            regular_file,
+            Path("regular.py"),
+        )
 
 
 class TestGetSetupCode:

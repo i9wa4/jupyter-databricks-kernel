@@ -73,6 +73,7 @@ def mock_config() -> MagicMock:
     config.sync.exclude = []
     config.sync.max_size_mb = None
     config.sync.max_file_size_mb = None
+    config.sync.compression_level = None
     config.sync.use_gitignore = True
     config.sync.workspace_extract_dir = None
     config.base_path = None
