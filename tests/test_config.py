@@ -216,6 +216,18 @@ class TestConfigValidate:
         errors = config.validate()
         assert len(errors) == 0
 
+    def test_validate_rejects_workspace_extract_dir_mount(self) -> None:
+        """Test validation rejects /Workspace extraction paths."""
+        config = Config(
+            cluster_id="test-cluster",
+            sync=SyncConfig(workspace_extract_dir="/Workspace/Users/example/project"),
+        )
+
+        errors = config.validate()
+
+        assert len(errors) == 1
+        assert "workspace_extract_dir must not use /Workspace" in errors[0]
+
     def test_validate_max_size_mb_positive(self) -> None:
         """Test validation fails when max_size_mb is not positive."""
         config = Config(cluster_id="test-cluster")
