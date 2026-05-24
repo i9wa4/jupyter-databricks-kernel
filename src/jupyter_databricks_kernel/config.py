@@ -13,6 +13,15 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 CANONICAL_PROJECT_CONFIG_PATH = Path(".databricks") / "jupyter-databricks-kernel.json"
+WORKSPACE_MOUNT_PREFIX = "/Workspace"
+
+
+def is_workspace_mount_path(path: str) -> bool:
+    """Return whether a remote path targets the Databricks Workspace mount."""
+    normalized = path.rstrip("/")
+    return normalized == WORKSPACE_MOUNT_PREFIX or normalized.startswith(
+        f"{WORKSPACE_MOUNT_PREFIX}/"
+    )
 
 
 @dataclass
@@ -275,5 +284,14 @@ class Config:
 
         if self.sync.max_file_size_mb is not None and self.sync.max_file_size_mb <= 0:
             errors.append("max_file_size_mb must be a positive number.")
+
+        if self.sync.workspace_extract_dir and is_workspace_mount_path(
+            self.sync.workspace_extract_dir
+        ):
+            errors.append(
+                "workspace_extract_dir must not use /Workspace. "
+                "Use the default /tmp/jupyter_databricks_kernel/"
+                "<project>-<hash>/ extraction path or another driver-local path."
+            )
 
         return errors
