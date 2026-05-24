@@ -143,16 +143,15 @@ compression_level = 1
 use_gitignore = true
 ```
 
-| Option                       | Description                              | Default        |
-| ---------------------------- | ---------------------------------------- | -------------- |
-| `sync.enabled`               | Enable file synchronization              | `true`         |
-| `sync.source`                | Source directory to sync                 | `"."`          |
-| `sync.exclude`               | Additional exclude patterns              | `[]`           |
-| `sync.max_size_mb`           | Maximum total project size in MB         | No limit       |
-| `sync.max_file_size_mb`      | Maximum individual file size in MB       | No limit       |
-| `sync.compression_level`     | ZIP compression level (0 fast, 9 small)  | Python default |
-| `sync.use_gitignore`         | Respect .gitignore patterns              | `true`         |
-| `sync.workspace_extract_dir` | Custom driver-local extraction directory | `null` (auto)  |
+| Option                       | Description                              | Default       |
+| ---------------------------- | ---------------------------------------- | ------------- |
+| `sync.enabled`               | Enable file synchronization              | `true`        |
+| `sync.source`                | Source directory to sync                 | `"."`         |
+| `sync.exclude`               | Additional exclude patterns              | `[]`          |
+| `sync.max_size_mb`           | Maximum total project size in MB         | No limit      |
+| `sync.max_file_size_mb`      | Maximum individual file size in MB       | No limit      |
+| `sync.use_gitignore`         | Respect .gitignore patterns              | `true`        |
+| `sync.workspace_extract_dir` | Custom driver-local extraction directory | `null` (auto) |
 
 The extraction directory can also be set via the
 `JUPYTER_DATABRICKS_KERNEL_EXTRACT_DIR` environment variable, which takes
@@ -168,6 +167,9 @@ where `<project>` is derived from the local project root directory name and
 `<hash>` is derived from the project root path. This single path works
 uniformly for user accounts and service principals while avoiding collisions
 between different projects with the same directory name.
+
+Set `sync.compression_level` to choose the ZIP compression level from 0 (fast)
+through 9 (small). If unset, Python's `zipfile` default is used.
 
 [sdk-auth]: https://docs.databricks.com/en/dev-tools/sdk-python.html#authentication
 [vscode-jupyter]: https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter

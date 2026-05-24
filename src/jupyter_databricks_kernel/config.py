@@ -281,6 +281,15 @@ class Config:
                 "run 'databricks auth login --configure-cluster'."
             )
 
+        compression_level: object = self.sync.compression_level
+        if compression_level is not None:
+            if not isinstance(compression_level, int) or isinstance(
+                compression_level, bool
+            ):
+                errors.append("compression_level must be an integer from 0 to 9.")
+            elif not 0 <= compression_level <= 9:
+                errors.append("compression_level must be an integer from 0 to 9.")
+
         # Validate sync size limits
         if self.sync.max_size_mb is not None and self.sync.max_size_mb <= 0:
             errors.append("max_size_mb must be a positive number.")
@@ -296,14 +305,5 @@ class Config:
                 "Use the default /tmp/jupyter_databricks_kernel/"
                 "<project>-<hash>/ extraction path or another driver-local path."
             )
-
-        compression_level: object = self.sync.compression_level
-        if compression_level is not None:
-            if not isinstance(compression_level, int) or isinstance(
-                compression_level, bool
-            ):
-                errors.append("compression_level must be an integer from 0 to 9.")
-            elif not 0 <= compression_level <= 9:
-                errors.append("compression_level must be an integer from 0 to 9.")
 
         return errors
