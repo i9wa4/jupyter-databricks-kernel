@@ -1215,6 +1215,17 @@ class TestGetSetupSteps:
         assert "_fallback_dir" not in prepare_code
         assert "try:" not in prepare_code
 
+    def test_workspace_mount_extract_dir_rejected(
+        self, mock_file_sync: FileSync
+    ) -> None:
+        """Test that /Workspace extraction paths are not supported."""
+        mock_file_sync.config.sync.workspace_extract_dir = (
+            "/Workspace/Users/example/project"
+        )
+
+        with pytest.raises(ValueError, match="must not use /Workspace"):
+            mock_file_sync.get_setup_steps("/tmp/test/project.zip")
+
     def test_default_path_is_deterministic(self, mock_file_sync: FileSync) -> None:
         """Test that default path is deterministic (no session UUID in path)."""
         cluster_zip_path = "/tmp/test/project.zip"

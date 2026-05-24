@@ -143,20 +143,24 @@ compression_level = 1
 use_gitignore = true
 ```
 
-| Option                       | Description                             | Default        |
-| ---------------------------- | --------------------------------------- | -------------- |
-| `sync.enabled`               | Enable file synchronization             | `true`         |
-| `sync.source`                | Source directory to sync                | `"."`          |
-| `sync.exclude`               | Additional exclude patterns             | `[]`           |
-| `sync.max_size_mb`           | Maximum total project size in MB        | No limit       |
-| `sync.max_file_size_mb`      | Maximum individual file size in MB      | No limit       |
-| `sync.compression_level`     | ZIP compression level (0 fast, 9 small) | Python default |
-| `sync.use_gitignore`         | Respect .gitignore patterns             | `true`         |
-| `sync.workspace_extract_dir` | Custom extraction directory on cluster  | `null` (auto)  |
+| Option                       | Description                              | Default        |
+| ---------------------------- | ---------------------------------------- | -------------- |
+| `sync.enabled`               | Enable file synchronization              | `true`         |
+| `sync.source`                | Source directory to sync                 | `"."`          |
+| `sync.exclude`               | Additional exclude patterns              | `[]`           |
+| `sync.max_size_mb`           | Maximum total project size in MB         | No limit       |
+| `sync.max_file_size_mb`      | Maximum individual file size in MB       | No limit       |
+| `sync.compression_level`     | ZIP compression level (0 fast, 9 small)  | Python default |
+| `sync.use_gitignore`         | Respect .gitignore patterns              | `true`         |
+| `sync.workspace_extract_dir` | Custom driver-local extraction directory | `null` (auto)  |
 
 The extraction directory can also be set via the
 `JUPYTER_DATABRICKS_KERNEL_EXTRACT_DIR` environment variable, which takes
 priority over `pyproject.toml`.
+
+Extraction runs on the cluster driver under `/tmp` by default. Legacy
+Databricks Workspace mount paths such as `/Workspace/...` are not used as a
+fallback and are rejected when configured explicitly.
 
 By default, files are extracted to
 `/tmp/jupyter_databricks_kernel/<project>-<hash>/` on the cluster driver node,

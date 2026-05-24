@@ -26,12 +26,12 @@ from typing import TYPE_CHECKING, Any
 
 import pathspec
 from databricks.sdk import WorkspaceClient
+from pathspec.pattern import Pattern
 
 from . import __version__
+from .config import is_workspace_mount_path
 
 if TYPE_CHECKING:
-    from pathspec.pattern import Pattern as PathSpecPattern
-
     from .config import Config
     from .executor import DatabricksExecutor
 
@@ -485,7 +485,7 @@ class FileSync:
             raise ValueError(f"Invalid session_id format: {session_id}")
         self.session_id = session_id
         self._synced = False
-        self._pathspec: pathspec.PathSpec[PathSpecPattern] | None = None
+        self._pathspec: pathspec.PathSpec[Pattern] | None = None
         self._pathspec_mtime: float = 0.0
         self._file_cache: FileCache | None = None
         self._command_context_id: str | None = None
@@ -540,9 +540,7 @@ class FileSync:
         base = self.config.base_path if self.config.base_path else Path.cwd()
         return base / source
 
-    def _load_gitignore_spec(
-        self, source_path: Path
-    ) -> pathspec.PathSpec[PathSpecPattern]:
+    def _load_gitignore_spec(self, source_path: Path) -> pathspec.PathSpec[Pattern]:
         """Load and cache the combined PathSpec from default and configured patterns.
 
         This method combines patterns from:
@@ -993,6 +991,12 @@ print(target_dir)
         # Check if custom workspace_extract_dir is configured
         if self.config.sync.workspace_extract_dir:
             workspace_extract_dir = self.config.sync.workspace_extract_dir
+            if is_workspace_mount_path(workspace_extract_dir):
+                raise ValueError(
+                    "workspace_extract_dir must not use /Workspace. "
+                    "Use the default /tmp/jupyter_databricks_kernel/"
+                    "<project>-<hash>/ extraction path or another driver-local path."
+                )
             # Use custom path directly without fallback
             return [
                 (
