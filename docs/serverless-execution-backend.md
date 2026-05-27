@@ -1,6 +1,12 @@
 # Serverless Execution Backend Investigation
 
 Research date: 2026-05-24.
+Official reference review date: 2026-05-27.
+
+Reference scope: use Databricks AWS English documentation where an AWS-scoped
+page exists. The REST API reference pages are official Databricks API
+references; they are used for API details that do not have AWS-scoped reference
+URLs.
 
 ## Recommendation
 
@@ -11,9 +17,10 @@ Serverless compute can complement this project for specific non-interactive
 paths, but it is not a drop-in backend for the current Jupyter kernel contract.
 The current kernel and runner rely on the Databricks Command Execution API,
 which creates a stateful execution context on a configured `cluster_id` and then
-executes sequential Python commands in that context. The Databricks SDK
-documents that Command Execution supports running Databricks clusters and only
-classic all-purpose clusters; serverless compute is not supported.
+executes sequential Python commands in that context. The official Databricks
+Command Execution API reference documents that it runs commands on running
+Databricks clusters, supports only classic all-purpose clusters, and does not
+support serverless compute.
 
 Recommended path:
 
@@ -22,9 +29,10 @@ Recommended path:
 2. Consider a separate SQL-only backend using the Statement Execution API and a
    SQL warehouse ID.
 3. Consider a separate batch backend for `run-py`, `run-db-py`, or `run-ipynb`
-   using serverless Lakeflow Jobs, if file staging and output capture are
-   redesigned for workspace files, Unity Catalog volumes, or Git-backed
-   notebook tasks.
+   using serverless Lakeflow Jobs, if file staging, dependency configuration,
+   timeout/cancel handling, cleanup, and output capture are redesigned for
+   workspace files, Unity Catalog volumes, cloud object storage, or Git-backed
+   tasks.
 4. Defer a serverless replacement for interactive notebook execution until
    Databricks provides a public stateful command/session API for serverless
    Python execution, or until the project intentionally changes semantics to a
@@ -48,13 +56,14 @@ remote execution context.
 
 ## Serverless-Capable Surfaces
 
-| Surface                             | Serverless fit                  | Useful for this project          | Main limitation                                                        |
-| ----------------------------------- | ------------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
-| Command Execution API               | No                              | Current kernel and runner backend | Classic all-purpose clusters only.                                     |
-| Statement Execution API             | Yes, through SQL warehouses     | SQL-only execution path          | SQL statements only; no Python state, magics, or synchronized files.    |
-| Lakeflow Jobs / Jobs API            | Yes, for supported task types   | Batch script or notebook runs    | Job/task lifecycle, not low-latency per-cell execution.                |
-| Serverless notebooks in Databricks UI | Yes                            | Evidence for interactive support | UI flow, not a public Command Execution equivalent.                    |
-| Spark Connect / Databricks Connect style | Serverless uses Spark Connect APIs | Possible future separate mode | Python runs locally; only Spark operations execute remotely.            |
+| Surface                              | Serverless fit                                | Useful for this project           | Main limitation                                                     |
+| ------------------------------------ | --------------------------------------------- | --------------------------------- | ------------------------------------------------------------------- |
+| Command Execution API                | No                                            | Current kernel and runner backend | Classic all-purpose clusters only.                                  |
+| Statement Execution API              | Yes, through SQL warehouses                   | SQL-only execution path           | SQL statements only; no Python state, magics, or synchronized files. |
+| Lakeflow Jobs / Jobs API             | Yes, for supported task types                 | Batch script or notebook runs     | Job/task lifecycle, not low-latency per-cell execution.             |
+| Python script task on serverless Jobs | Yes, through Jobs/Lakeflow serverless compute | Single-file batch `run-py` path   | Requires staging an accessible file and capturing job-run output.    |
+| Serverless notebooks in Databricks UI | Yes                                           | Evidence for interactive support  | UI flow, not a public Command Execution equivalent.                 |
+| Spark Connect / Databricks Connect style | Serverless uses Spark Connect APIs        | Possible future separate mode     | Python runs locally; only Spark operations execute remotely.         |
 
 ## API Findings
 
@@ -65,7 +74,7 @@ matches stateful cell-by-cell Python execution. It creates an execution context
 and runs commands inside that context. It is not a serverless API.
 
 Source:
-<https://databricks-sdk-py.readthedocs.io/en/latest/workspace/compute/command_execution.html>
+<https://docs.databricks.com/api/workspace/commandexecution>
 
 ### Statement Execution API
 
@@ -77,7 +86,8 @@ or external links for larger result sets.
 This is viable for a SQL-only companion backend when the user configures a
 `warehouse_id`. It does not satisfy the existing Python kernel semantics.
 
-Source:
+Sources:
+<https://docs.databricks.com/aws/en/dev-tools/sql-execution-tutorial>
 <https://docs.databricks.com/api/workspace/statementexecution>
 
 ### Lakeflow Jobs / Jobs API
@@ -92,10 +102,59 @@ need interactive state. It is not a good fit for a Jupyter kernel cell loop.
 Serverless jobs also have workload-specific behavior: standard performance mode
 can have several minutes of startup latency, performance optimized mode is
 faster, and serverless auto-optimization can retry failed tasks unless disabled.
+The Jobs API exposes serverless job examples with `notebook_task` and
+`spark_python_task` tasks, and serverless Python script, Python wheel, and dbt
+tasks require an `environment_key` in the task settings.
 
 Sources:
 <https://docs.databricks.com/aws/en/jobs/run-serverless-jobs>
 <https://docs.databricks.com/api/workspace/jobs/create>
+<https://docs.databricks.com/api/workspace/jobs/submit>
+
+### Python Single-File Batch Execution
+
+A narrow serverless Python feature is plausible as batch execution, not as a
+kernel backend. A runner such as `run-py --backend serverless-job script.py`
+could stage one Python file to a Databricks-accessible location, submit a
+serverless Jobs task with `spark_python_task.python_file`, poll the run, and
+return status plus captured logs or run output.
+
+The first version should be intentionally constrained:
+
+- One self-contained Python file.
+- No automatic project sync.
+- No persistent Python variables across runs.
+- No interactive `input()` prompts.
+- Dependencies configured through a serverless job environment or supported
+  library locations.
+- Output captured from the job run, subject to Jobs API and serverless logging
+  behavior.
+- Cleanup for any uploaded workspace file, volume file, or temporary job
+  object.
+
+Databricks documents that Python script tasks run a Python file and require the
+script to be uploaded to a location accessible to the job author. For source
+storage, Databricks recommends workspace files for Python scripts, and also
+documents DBFS/S3, Unity Catalog volumes, cloud object storage, and Git-backed
+sources. For serverless compute, the task uses the Environment and Libraries
+field to select or create an environment.
+
+Sources:
+<https://docs.databricks.com/aws/en/jobs/python-script>
+<https://docs.databricks.com/aws/en/files/workspace>
+<https://docs.databricks.com/aws/en/files/files-recommendations>
+
+### Notebook Batch Execution
+
+Serverless notebook execution is also plausible as batch execution through a
+Jobs notebook task. The notebook must be in a location accessible to the job,
+such as a workspace notebook or Git-backed source. This maps to whole-notebook
+execution, not Jupyter kernel semantics, and notebook job output has documented
+cell output size limits.
+
+Sources:
+<https://docs.databricks.com/aws/en/jobs/notebook>
+<https://docs.databricks.com/aws/en/jobs/run-serverless-jobs>
 
 ### Serverless Notebooks
 
@@ -163,7 +222,15 @@ The current project syncs local files to the cluster driver node and runs code
 from the extracted local path. Serverless compute has different storage
 constraints: DBFS access is limited, Unity Catalog volumes or workspace files
 are recommended, and compute-scoped libraries and init scripts are not
-supported. Any serverless batch backend would need a separate staging design.
+supported. Workspace files are useful for small code assets, but serverless has
+workspace file caveats such as executor read/write limits and unsupported
+`dbutils.fs` access to workspace files. Any serverless batch backend would need
+a separate staging design.
+
+Sources:
+<https://docs.databricks.com/aws/en/compute/serverless/limitations>
+<https://docs.databricks.com/aws/en/files/workspace>
+<https://docs.databricks.com/aws/en/files/files-recommendations>
 
 ## Notebook-Style Execution Blockers
 
@@ -171,8 +238,8 @@ supported. Any serverless batch backend would need a separate staging design.
 - No documented public serverless API that creates a reusable Python execution
   context equivalent to `context_id`.
 - SQL warehouses can execute SQL but cannot run arbitrary Python cells.
-- Jobs can run notebooks and scripts but are batch runs, not per-cell Jupyter
-  kernel execution.
+- Jobs can run notebooks and Python scripts on serverless compute, but they are
+  batch runs, not per-cell Jupyter kernel execution.
 - Serverless notebook limitations exclude Scala and R notebooks, RDD APIs,
   Spark UI access, Spark logs, compute-scoped libraries, init scripts, and
   environment variables.
@@ -190,7 +257,8 @@ Potential routing model:
 - `backend = "sql-statement"`: SQL-only execution, requires `warehouse_id`,
   uses the Statement Execution API.
 - `backend = "serverless-job"`: batch scripts or notebooks, uses Jobs API task
-  submission and a separate file staging/output strategy.
+  submission and a separate file staging/output strategy. A first scoped
+  feature could support only a single self-contained Python file.
 
 Do not route individual Jupyter cells between these backends implicitly. A
 single notebook session could observe inconsistent Python variables, temporary
@@ -202,6 +270,12 @@ views, working directories, library state, and output semantics.
   warehouses, Lakeflow Jobs/Jobs API for supported task types, Databricks UI
   serverless notebooks, and Spark Connect based APIs. Command Execution remains
   classic all-purpose only.
+- Python single-file batch: feasible as a separate Jobs/Lakeflow serverless
+  runner if the file is staged to a Databricks-accessible location and the
+  implementation explicitly handles serverless environments, job output,
+  timeout/cancel, cleanup, and documented serverless limitations.
+- Notebook batch: feasible as a whole-notebook Jobs task, but not as
+  cell-by-cell Jupyter kernel execution.
 - Latency and cost: serverless reduces idle infrastructure management but does
   not guarantee lower interactive latency for every path; serverless workflows
   standard performance mode can have 4-6 minute startup latency, while classic
