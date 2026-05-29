@@ -38,6 +38,7 @@ class SyncConfig:
     exclude: list[str] = field(default_factory=list)
     max_size_mb: float | None = None
     max_file_size_mb: float | None = None
+    compression_level: int | None = None
     use_gitignore: bool = True
     workspace_extract_dir: str | None = None
 
@@ -254,6 +255,8 @@ class Config:
                 self.sync.max_size_mb = sync_data["max_size_mb"]
             if "max_file_size_mb" in sync_data:
                 self.sync.max_file_size_mb = sync_data["max_file_size_mb"]
+            if "compression_level" in sync_data:
+                self.sync.compression_level = sync_data["compression_level"]
             if "use_gitignore" in sync_data:
                 self.sync.use_gitignore = sync_data["use_gitignore"]
             if "workspace_extract_dir" in sync_data:
@@ -277,6 +280,15 @@ class Config:
                 "Please set DATABRICKS_CLUSTER_ID environment variable or "
                 "run 'databricks auth login --configure-cluster'."
             )
+
+        compression_level: object = self.sync.compression_level
+        if compression_level is not None:
+            if not isinstance(compression_level, int) or isinstance(
+                compression_level, bool
+            ):
+                errors.append("compression_level must be an integer from 0 to 9.")
+            elif not 0 <= compression_level <= 9:
+                errors.append("compression_level must be an integer from 0 to 9.")
 
         # Validate sync size limits
         if self.sync.max_size_mb is not None and self.sync.max_size_mb <= 0:

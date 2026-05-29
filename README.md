@@ -139,6 +139,7 @@ source = "."
 exclude = ["*.log", "data/"]
 max_size_mb = 100.0
 max_file_size_mb = 10.0
+compression_level = 1
 use_gitignore = true
 ```
 
@@ -166,6 +167,9 @@ where `<project>` is derived from the local project root directory name and
 `<hash>` is derived from the project root path. This single path works
 uniformly for user accounts and service principals while avoiding collisions
 between different projects with the same directory name.
+
+Set `sync.compression_level` to choose the ZIP compression level from 0 (fast)
+through 9 (small). If unset, Python's `zipfile` default is used.
 
 [sdk-auth]: https://docs.databricks.com/en/dev-tools/sdk-python.html#authentication
 [vscode-jupyter]: https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter

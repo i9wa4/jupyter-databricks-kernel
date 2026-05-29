@@ -751,7 +751,12 @@ class FileSync:
         source_path = self._get_source_path()
         zip_buffer = io.BytesIO()
 
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(
+            zip_buffer,
+            "w",
+            zipfile.ZIP_DEFLATED,
+            compresslevel=self.config.sync.compression_level,
+        ) as zf:
             if files is not None:
                 # Use pre-computed file list (avoids duplicate os.walk)
                 for file_path in files:
