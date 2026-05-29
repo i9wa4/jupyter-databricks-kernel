@@ -372,7 +372,10 @@ choose one source of truth in the companion server.
 
 ## 8. Known Limitations
 
-- Serverless compute is not supported (Command Execution API limitation)
+- Serverless compute is not supported for the current kernel backend
+  (Command Execution API limitation). See the
+  [serverless execution backend investigation](./docs/serverless-execution-backend.md)
+  for the current recommendation and possible complementary backend paths.
 - `input()` and interactive prompts do not work
 - Interactive widgets (ipywidgets) are not supported
 
