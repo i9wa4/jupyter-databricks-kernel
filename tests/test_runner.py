@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from jupyter_databricks_kernel.executor import ExecutionResult
-from jupyter_databricks_kernel.runner import run_db_py, run_ipynb, run_py, write_output
+from jupyter_databricks_kernel.runner import (
+    cli_run,
+    detect_run_format,
+    run_db_py,
+    run_file,
+    run_ipynb,
+    run_py,
+    write_output,
+)
 
 if TYPE_CHECKING:
     pass
@@ -27,6 +38,55 @@ def _make_executor(output: str = "ok-output", error: str | None = None) -> Magic
         status=status, output=output, error=error
     )
     return executor
+
+
+# ---------------------------------------------------------------------------
+# run format dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestRunFormatDispatch:
+    """Tests for unified runner format dispatch."""
+
+    def test_detects_py_file(self, tmp_path: Path) -> None:
+        """Plain .py files dispatch to the py runner."""
+        assert detect_run_format(tmp_path / "script.py") == "py"
+
+    def test_detects_db_py_before_plain_py(self, tmp_path: Path) -> None:
+        """Databricks .db.py files dispatch to the db-py runner."""
+        assert detect_run_format(tmp_path / "notebook.db.py") == "db-py"
+
+    def test_detects_ipynb_file(self, tmp_path: Path) -> None:
+        """Notebook files dispatch to the ipynb runner."""
+        assert detect_run_format(tmp_path / "notebook.ipynb") == "ipynb"
+
+    def test_explicit_format_overrides_extension(self, tmp_path: Path) -> None:
+        """The --format equivalent overrides extension-based detection."""
+        assert detect_run_format(tmp_path / "script.py", "db-py") == "db-py"
+
+    def test_rejects_unknown_extension(self, tmp_path: Path) -> None:
+        """Unsupported extensions fail with an actionable error."""
+        with pytest.raises(ValueError, match="Cannot infer runner format"):
+            detect_run_format(tmp_path / "notes.txt")
+
+    def test_run_file_dispatches_to_db_py(self, tmp_path: Path) -> None:
+        """run_file dispatches to the selected runner implementation."""
+        py_file = tmp_path / "notebook.db.py"
+        py_file.write_text("print('db')\n")
+        executor = _make_executor()
+
+        result = run_file(py_file, executor)
+
+        assert result.status == "ok"
+        executor.execute.assert_called_once_with("print('db')\n", timeout=None)
+
+    def test_run_file_rejects_inplace_for_non_notebook(self, tmp_path: Path) -> None:
+        """--inplace is only valid for ipynb execution."""
+        py_file = tmp_path / "script.py"
+        py_file.write_text("print('py')\n")
+
+        with pytest.raises(ValueError, match="--inplace"):
+            run_file(py_file, _make_executor(), inplace=True)
 
 
 # ---------------------------------------------------------------------------
@@ -268,3 +328,82 @@ class TestWriteOutput:
         out_path = write_output(result, source)
         assert out_path.name.startswith("myfile.py.")
         assert out_path.name.endswith(".output.md")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+class TestCliRun:
+    """Tests for unified CLI behavior."""
+
+    def test_unified_cli_dispatches_by_extension(self, tmp_path: Path) -> None:
+        """cli_run infers the runner from the input file extension."""
+        import sys
+
+        py_file = tmp_path / "script.py"
+        py_file.write_text("print('cli')\n")
+        output_dir = tmp_path / "outputs"
+        executor = _make_executor(output="cli")
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["run", str(py_file), "--output-dir", str(output_dir)],
+            ),
+            patch("jupyter_databricks_kernel.config.Config.load"),
+            patch(
+                "jupyter_databricks_kernel.executor.DatabricksExecutor",
+                return_value=executor,
+            ),
+        ):
+            cli_run()
+
+        executor.create_context.assert_called_once_with()
+        executor.execute.assert_called_once_with(
+            "print('cli')\n", timeout=timedelta(seconds=600)
+        )
+        executor.destroy_context.assert_called_once_with()
+        assert list(output_dir.glob("script.py.*.output.md"))
+
+    def test_unified_cli_format_override(self, tmp_path: Path) -> None:
+        """cli_run supports an explicit --format override."""
+        import sys
+
+        py_file = tmp_path / "notebook.py"
+        py_file.write_text("print('db')\n")
+        executor = _make_executor(output="db")
+
+        with (
+            patch.object(sys, "argv", ["run", "--format", "db-py", str(py_file)]),
+            patch("jupyter_databricks_kernel.config.Config.load"),
+            patch(
+                "jupyter_databricks_kernel.executor.DatabricksExecutor",
+                return_value=executor,
+            ),
+        ):
+            cli_run()
+
+        executor.execute.assert_called_once_with(
+            "print('db')\n", timeout=timedelta(seconds=600)
+        )
+
+    def test_serverless_flag_fails_fast_with_documented_limitation(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--serverless is accepted by the parser but not silently routed."""
+        import sys
+
+        py_file = tmp_path / "script.py"
+        py_file.write_text("print('serverless')\n")
+
+        with (
+            patch.object(sys, "argv", ["run", "--serverless", str(py_file)]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            cli_run()
+
+        assert exc_info.value.code == 2
+        assert "--serverless is recognized" in capsys.readouterr().err

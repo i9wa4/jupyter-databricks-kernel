@@ -6,10 +6,75 @@ import json
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from .executor import DatabricksExecutor, ExecutionResult
+
+RunFormat = Literal["py", "db-py", "ipynb"]
+
+
+def detect_run_format(
+    path: Path, explicit_format: RunFormat | None = None
+) -> RunFormat:
+    """Detect the runner format for a path.
+
+    Args:
+        path: File path to dispatch.
+        explicit_format: Optional user-selected format.
+
+    Returns:
+        The runner format.
+
+    Raises:
+        ValueError: If the file extension cannot be dispatched.
+    """
+    if explicit_format is not None:
+        return explicit_format
+    if path.suffix == ".ipynb":
+        return "ipynb"
+    if path.name.endswith(".db.py"):
+        return "db-py"
+    if path.suffix == ".py":
+        return "py"
+    raise ValueError(
+        f"Cannot infer runner format for '{path}'. "
+        "Use --format py, --format db-py, or --format ipynb."
+    )
+
+
+def run_file(
+    path: Path,
+    executor: DatabricksExecutor,
+    timeout: timedelta | None = None,
+    explicit_format: RunFormat | None = None,
+    inplace: bool = False,
+) -> ExecutionResult:
+    """Execute a supported runner input file.
+
+    Args:
+        path: Input file path.
+        executor: Initialized DatabricksExecutor with an active context.
+        timeout: Execution timeout.
+        explicit_format: Optional format override.
+        inplace: Whether to write notebook outputs back to an ipynb file.
+
+    Returns:
+        ExecutionResult from the selected runner.
+
+    Raises:
+        ValueError: If the format is unsupported or --inplace is invalid.
+    """
+    run_format = detect_run_format(path, explicit_format)
+    if inplace and run_format != "ipynb":
+        raise ValueError("--inplace is only supported for ipynb inputs")
+    if run_format == "py":
+        return run_py(path, executor, timeout=timeout)
+    if run_format == "db-py":
+        return run_db_py(path, executor, timeout=timeout)
+    if inplace:
+        return _run_ipynb_inplace(path, executor, timeout=timeout)
+    return run_ipynb(path, executor, timeout=timeout)
 
 
 def run_py(
@@ -227,20 +292,31 @@ def write_output(
     return out_path
 
 
-def _cli_dispatch(subcommand: str) -> None:
+def _cli_dispatch(default_format: RunFormat | None = None) -> None:
     """Shared dispatch logic for CLI entry points.
 
     Args:
-        subcommand: One of 'run_py', 'run_db_py'.
+        default_format: Optional format selected by a legacy entry point.
     """
     import argparse
     import sys
 
     from .config import Config
-    from .executor import DatabricksExecutor
+    from .executor import DatabricksExecutor, ExecutionResult
 
     parser = argparse.ArgumentParser()
     parser.add_argument("file", help="path to the file to execute")
+    parser.add_argument(
+        "--format",
+        choices=["py", "db-py", "ipynb"],
+        default=None,
+        help="input format override (default: infer from file extension)",
+    )
+    parser.add_argument(
+        "--inplace",
+        action="store_true",
+        help="write ipynb cell outputs back into the notebook",
+    )
     parser.add_argument(
         "--output-dir",
         default=".cache/outputs",
@@ -252,24 +328,48 @@ def _cli_dispatch(subcommand: str) -> None:
         default=600,
         help="execution timeout in seconds (default: 600)",
     )
+    parser.add_argument(
+        "--serverless",
+        action="store_true",
+        help="request Databricks serverless execution for non-interactive runs",
+    )
     parsed = parser.parse_args()
     file_path = Path(parsed.file)
     output_dir = parsed.output_dir
     timeout = timedelta(seconds=parsed.timeout)
+    explicit_format = cast(RunFormat | None, parsed.format or default_format)
+
+    if parsed.serverless:
+        parser.error(
+            "--serverless is recognized but not available yet. "
+            "The current runner uses Databricks Command Execution on classic "
+            "all-purpose clusters; see docs/serverless-execution-backend.md."
+        )
 
     config = Config.load()
     executor = DatabricksExecutor(config)
     executor.create_context()
     try:
-        fn = {"run_py": run_py, "run_db_py": run_db_py, "run_ipynb": run_ipynb}[
-            subcommand
-        ]
-        result = fn(file_path, executor, timeout=timeout)
+        try:
+            result = run_file(
+                file_path,
+                executor,
+                timeout=timeout,
+                explicit_format=explicit_format,
+                inplace=parsed.inplace,
+            )
+        except Exception as e:
+            result = ExecutionResult(status="error", error=str(e))
         write_output(result, file_path, output_dir)
     finally:
         executor.destroy_context()
     if result.status == "error":
         sys.exit(1)
+
+
+def cli_run() -> None:
+    """Unified CLI entry point for Databricks runner execution."""
+    _cli_dispatch()
 
 
 def cli_run_py() -> None:
@@ -282,7 +382,7 @@ def cli_run_py() -> None:
     ".cache/outputs"). Default execution timeout is 10 minutes; the cluster
     command is cancelled on timeout. Exits with code 1 on error or timeout.
     """
-    _cli_dispatch("run_py")
+    _cli_dispatch("py")
 
 
 def cli_run_db_py() -> None:
@@ -295,7 +395,7 @@ def cli_run_db_py() -> None:
     ".cache/outputs"). Default execution timeout is 10 minutes; the cluster
     command is cancelled on timeout. Exits with code 1 on error or timeout.
     """
-    _cli_dispatch("run_db_py")
+    _cli_dispatch("db-py")
 
 
 def cli_run_ipynb() -> None:
@@ -312,70 +412,8 @@ def cli_run_ipynb() -> None:
     Default execution timeout per cell is 10 minutes; the cluster command is
     cancelled on timeout. Exits with code 1 on error or timeout.
     """
-    import argparse
-    import sys
-
-    from .config import Config
-    from .executor import DatabricksExecutor, ExecutionResult
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("file", help="path to the .ipynb file to execute")
-    parser.add_argument(
-        "--inplace",
-        action="store_true",
-        help="write cell outputs back into the notebook (backup at <path>.bak)",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=".cache/outputs",
-        help="directory to write output file into (default: .cache/outputs)",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=600,
-        help="execution timeout per cell in seconds (default: 600)",
-    )
-    parsed = parser.parse_args()
-    file_path = Path(parsed.file)
-    inplace = parsed.inplace
-    output_dir = parsed.output_dir
-    timeout = timedelta(seconds=parsed.timeout)
-
-    config = Config.load()
-    executor = DatabricksExecutor(config)
-    executor.create_context()
-    try:
-        if inplace:
-            try:
-                result = _run_ipynb_inplace(file_path, executor, timeout=timeout)
-            except Exception as e:
-                result = ExecutionResult(status="error", error=str(e))
-        else:
-            result = run_ipynb(file_path, executor, timeout=timeout)
-        write_output(result, file_path, output_dir)
-    finally:
-        executor.destroy_context()
-    if result.status == "error":
-        sys.exit(1)
+    _cli_dispatch("ipynb")
 
 
 if __name__ == "__main__":
-    import sys
-
-    from .config import Config
-    from .executor import DatabricksExecutor
-
-    subcommand = sys.argv[1]
-    file_path = Path(sys.argv[2])
-    config = Config.load()
-    executor = DatabricksExecutor(config)
-    executor.create_context()
-    try:
-        fn = {"run_py": run_py, "run_db_py": run_db_py, "run_ipynb": run_ipynb}[
-            subcommand
-        ]
-        result = fn(file_path, executor)
-        write_output(result, file_path)
-    finally:
-        executor.destroy_context()
+    cli_run()

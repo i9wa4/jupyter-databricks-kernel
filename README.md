@@ -208,9 +208,24 @@ If the cluster is stopped, kernel startup may take 5-6 minutes. Increase
 jupyter execute notebook.ipynb --kernel_name=databricks --startup_timeout=600
 ```
 
-### 5.3. Runner CLI (`run-py`, `run-db-py`, `run-ipynb`)
+### 5.3. Runner CLI (`run`)
 
 Execute scripts and notebooks directly without launching Jupyter:
+
+```bash
+uv run run path/to/script.py
+uv run run path/to/notebook.db.py
+uv run run path/to/notebook.ipynb
+```
+
+The unified `run` command dispatches by file extension. Use `--format` to
+override detection:
+
+```bash
+uv run run --format db-py path/to/notebook.py
+```
+
+The previous entry points remain available as compatibility aliases:
 
 ```bash
 uv run run-py path/to/script.py
@@ -220,7 +235,11 @@ uv run run-ipynb path/to/notebook.ipynb
 
 Output is written to `.cache/outputs/<stem>.<YYYYMMDDTHHMMSS>.output.md`
 relative to the current working directory. Use `--output-dir` to override the
-directory.
+directory. The `--serverless` flag is recognized but currently fails fast
+because the implemented runner backend uses the Databricks Command Execution
+API on classic all-purpose clusters. See
+[serverless execution backend investigation](./docs/serverless-execution-backend.md)
+for the required separate backend design.
 
 #### Behavior notes
 
@@ -232,6 +251,7 @@ directory.
 | Timeout handling | Cluster command is cancelled; error written to output file |
 | Exit code | Exits with code 1 on error or timeout; code 0 on success |
 | `run-ipynb --inplace` | Writes cell outputs back into the notebook; backup at `<path>.bak` |
+| `run --serverless` | Recognized, but exits with an unsupported-backend error |
 
 ## 6. Papermill Integration
 
