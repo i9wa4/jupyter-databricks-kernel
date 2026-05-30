@@ -13,6 +13,9 @@ import pytest
 from jupyter_databricks_kernel.executor import ExecutionResult
 from jupyter_databricks_kernel.runner import (
     cli_run,
+    cli_run_db_py,
+    cli_run_ipynb,
+    cli_run_py,
     detect_run_format,
     run_db_py,
     run_file,
@@ -389,6 +392,114 @@ class TestCliRun:
         executor.execute.assert_called_once_with(
             "print('db')\n", timeout=timedelta(seconds=600)
         )
+
+    def test_run_py_console_entry_alias_uses_py_format(
+        self, tmp_path: Path
+    ) -> None:
+        """The run-py console entry keeps the legacy py default format."""
+        import sys
+
+        py_file = tmp_path / "script.txt"
+        py_file.write_text("print('py alias')\n")
+        output_dir = tmp_path / "outputs"
+        executor = _make_executor(output="py alias")
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["run-py", str(py_file), "--output-dir", str(output_dir)],
+            ),
+            patch("jupyter_databricks_kernel.config.Config.load"),
+            patch(
+                "jupyter_databricks_kernel.executor.DatabricksExecutor",
+                return_value=executor,
+            ),
+        ):
+            cli_run_py()
+
+        executor.execute.assert_called_once_with(
+            "print('py alias')\n", timeout=timedelta(seconds=600)
+        )
+        assert list(output_dir.glob("script.txt.*.output.md"))
+
+    def test_run_db_py_console_entry_alias_uses_db_py_format(
+        self, tmp_path: Path
+    ) -> None:
+        """The run-db-py console entry keeps the legacy db-py default format."""
+        import sys
+
+        py_file = tmp_path / "notebook.txt"
+        py_file.write_text("# Databricks notebook\nprint('db alias')\n")
+        output_dir = tmp_path / "outputs"
+        executor = _make_executor(output="db alias")
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["run-db-py", str(py_file), "--output-dir", str(output_dir)],
+            ),
+            patch("jupyter_databricks_kernel.config.Config.load"),
+            patch(
+                "jupyter_databricks_kernel.executor.DatabricksExecutor",
+                return_value=executor,
+            ),
+        ):
+            cli_run_db_py()
+
+        executor.execute.assert_called_once_with(
+            "# Databricks notebook\nprint('db alias')\n",
+            timeout=timedelta(seconds=600),
+        )
+        assert list(output_dir.glob("notebook.txt.*.output.md"))
+
+    def test_run_ipynb_console_entry_alias_uses_ipynb_format(
+        self, tmp_path: Path
+    ) -> None:
+        """The run-ipynb console entry keeps the legacy ipynb default format."""
+        import sys
+
+        nb_path = tmp_path / "notebook.txt"
+        nb_path.write_text(
+            json.dumps(
+                {
+                    "nbformat": 4,
+                    "nbformat_minor": 5,
+                    "metadata": {},
+                    "cells": [
+                        {
+                            "cell_type": "code",
+                            "execution_count": None,
+                            "metadata": {},
+                            "outputs": [],
+                            "source": ["print('ipynb alias')"],
+                        }
+                    ],
+                }
+            )
+        )
+        output_dir = tmp_path / "outputs"
+        executor = _make_executor(output="ipynb alias")
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["run-ipynb", str(nb_path), "--output-dir", str(output_dir)],
+            ),
+            patch("jupyter_databricks_kernel.config.Config.load"),
+            patch(
+                "jupyter_databricks_kernel.executor.DatabricksExecutor",
+                return_value=executor,
+            ),
+        ):
+            cli_run_ipynb()
+
+        executor.execute.assert_called_once_with(
+            "print('ipynb alias')", timeout=timedelta(seconds=600)
+        )
+        assert list(output_dir.glob("notebook.txt.*.output.md"))
 
     def test_serverless_flag_fails_fast_with_documented_limitation(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
