@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import re
+import time
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, Mock, patch
 
@@ -387,7 +388,7 @@ class TestFileCache:
     def test_get_changed_files_skips_hash_when_metadata_matches(
         self, tmp_path: Path
     ) -> None:
-        """Test unchanged mtime/size metadata avoids unnecessary hashing."""
+        """Test unchanged cached metadata avoids unnecessary hashing."""
         file1 = tmp_path / "file1.py"
         file2 = tmp_path / "file2.py"
         file1.write_text("content1")
@@ -404,6 +405,32 @@ class TestFileCache:
         assert stats.changed_files == 0
         assert stats.skipped_files == 2
         assert set(computed_hashes) == {"file1.py", "file2.py"}
+
+    def test_get_changed_files_detects_same_size_change_with_restored_mtime(
+        self, tmp_path: Path
+    ) -> None:
+        """Test ctime metadata preserves accuracy when mtime and size match."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content1")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+        cached_mtime = file1.stat().st_mtime_ns
+
+        time.sleep(0.01)
+        file1.write_text("CONTENT1")
+        os.utime(file1, ns=(cached_mtime, cached_mtime))
+
+        with patch.object(
+            FileCache, "compute_hash", wraps=cache.compute_hash
+        ) as compute_hash:
+            changed, stats, computed_hashes = cache.get_changed_files([file1])
+
+        compute_hash.assert_called_once_with(file1)
+        assert changed == [file1]
+        assert stats.changed_files == 1
+        assert stats.skipped_files == 0
+        assert computed_hashes["file1.py"] != cache._cache["file1.py"]
 
     def test_get_changed_files_treats_deleted_file_as_changed_without_hashing(
         self, tmp_path: Path
@@ -556,7 +583,7 @@ class TestFileCache:
     def test_has_any_changed_skips_hash_when_metadata_matches(
         self, tmp_path: Path
     ) -> None:
-        """Test mtime/size metadata provides a fast unchanged-file path."""
+        """Test cached metadata provides a fast unchanged-file path."""
         file1 = tmp_path / "file1.py"
         file1.write_text("content")
 
@@ -567,6 +594,28 @@ class TestFileCache:
             assert cache.has_any_changed([file1]) is False
 
         compute_hash.assert_not_called()
+
+    def test_has_any_changed_detects_same_size_change_with_restored_mtime(
+        self, tmp_path: Path
+    ) -> None:
+        """Test ctime metadata prevents false unchanged results."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+        cached_mtime = file1.stat().st_mtime_ns
+
+        time.sleep(0.01)
+        file1.write_text("CONTENT")
+        os.utime(file1, ns=(cached_mtime, cached_mtime))
+
+        with patch.object(
+            FileCache, "compute_hash", wraps=cache.compute_hash
+        ) as compute_hash:
+            assert cache.has_any_changed([file1]) is True
+
+        compute_hash.assert_called_once_with(file1)
 
     def test_has_any_changed_falls_back_to_hash_when_metadata_differs(
         self, tmp_path: Path

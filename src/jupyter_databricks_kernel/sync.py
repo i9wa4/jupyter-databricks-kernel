@@ -170,6 +170,7 @@ class FileCache:
     _cache: dict[str, str] = field(default_factory=dict)
     _mtimes: dict[str, int] = field(default_factory=dict)
     _sizes: dict[str, int] = field(default_factory=dict)
+    _ctimes: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Load cache from file after initialization."""
@@ -205,6 +206,7 @@ class FileCache:
                 self._cache = {}
                 self._mtimes = {}
                 self._sizes = {}
+                self._ctimes = {}
                 return
 
             self._cache = data.get("files", {})
@@ -218,11 +220,17 @@ class FileCache:
                 for path, size in data.get("sizes", {}).items()
                 if isinstance(path, str)
             }
+            self._ctimes = {
+                path: int(ctime)
+                for path, ctime in data.get("ctimes", {}).items()
+                if isinstance(path, str)
+            }
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load cache, resetting: %s", e)
             self._cache = {}
             self._mtimes = {}
             self._sizes = {}
+            self._ctimes = {}
 
     def save(self) -> None:
         """Save cache to file atomically.
@@ -246,6 +254,7 @@ class FileCache:
                 "files": self._cache,
                 "mtimes": self._mtimes,
                 "sizes": self._sizes,
+                "ctimes": self._ctimes,
             }
 
             # Create secure temporary file in same directory (for atomic rename)
@@ -337,6 +346,7 @@ class FileCache:
             self._cache.get(rel_path) is not None
             and self._mtimes.get(rel_path) == stat_result.st_mtime_ns
             and self._sizes.get(rel_path) == stat_result.st_size
+            and self._ctimes.get(rel_path) == stat_result.st_ctime_ns
         )
 
     def get_changed_files(
@@ -461,6 +471,7 @@ class FileCache:
                 if stat_result is not None:
                     self._mtimes[rel_path] = stat_result.st_mtime_ns
                     self._sizes[rel_path] = stat_result.st_size
+                    self._ctimes[rel_path] = stat_result.st_ctime_ns
             except OSError:
                 pass  # Skip files that can't be read
 
@@ -469,6 +480,7 @@ class FileCache:
         self._cache = {}
         self._mtimes = {}
         self._sizes = {}
+        self._ctimes = {}
 
     def get_deleted_files(self, current_files: list[Path]) -> list[str]:
         """Get list of files that exist in cache but not in current files.
@@ -497,6 +509,7 @@ class FileCache:
         self._cache.pop(rel_path, None)
         self._mtimes.pop(rel_path, None)
         self._sizes.pop(rel_path, None)
+        self._ctimes.pop(rel_path, None)
 
     def has_any_changed(self, files: list[Path]) -> bool:
         """Check if any file has changed, with early return on first change.
@@ -526,6 +539,7 @@ class FileCache:
                     return True
                 self._mtimes[rel_path] = stat_result.st_mtime_ns
                 self._sizes[rel_path] = stat_result.st_size
+                self._ctimes[rel_path] = stat_result.st_ctime_ns
             except OSError:
                 # File read error, treat as changed
                 return True
