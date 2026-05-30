@@ -236,8 +236,8 @@ uv run run-ipynb path/to/notebook.ipynb
 Output is written to `.cache/outputs/<stem>.<YYYYMMDDTHHMMSS>.output.md`
 relative to the current working directory. Use `--output-dir` to override the
 directory. The `--serverless` flag is recognized but currently fails fast
-because the implemented runner backend uses the Databricks Command Execution
-API on classic all-purpose clusters. See
+because the implemented runner backend uses the Databricks Command Execution API
+on classic all-purpose clusters. See
 [serverless execution backend investigation](./docs/serverless-execution-backend.md)
 for the required separate backend design.
 
