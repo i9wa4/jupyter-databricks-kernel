@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 SyncProgressCallback = Callable[[str], None]
 
 CACHE_FILE_NAME = ".jupyter-databricks-kernel-cache.json"
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 # Default patterns that are always excluded, matching Databricks CLI behavior.
 # See: https://github.com/databricks/cli/blob/main/libs/git/view.go
@@ -168,6 +168,8 @@ class FileCache:
 
     source_path: Path
     _cache: dict[str, str] = field(default_factory=dict)
+    _mtimes: dict[str, int] = field(default_factory=dict)
+    _sizes: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Load cache from file after initialization."""
@@ -201,12 +203,26 @@ class FileCache:
             if data.get("version") != CACHE_VERSION:
                 logger.warning("Cache version mismatch, resetting cache")
                 self._cache = {}
+                self._mtimes = {}
+                self._sizes = {}
                 return
 
             self._cache = data.get("files", {})
+            self._mtimes = {
+                path: int(mtime)
+                for path, mtime in data.get("mtimes", {}).items()
+                if isinstance(path, str)
+            }
+            self._sizes = {
+                path: int(size)
+                for path, size in data.get("sizes", {}).items()
+                if isinstance(path, str)
+            }
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load cache, resetting: %s", e)
             self._cache = {}
+            self._mtimes = {}
+            self._sizes = {}
 
     def save(self) -> None:
         """Save cache to file atomically.
@@ -228,6 +244,8 @@ class FileCache:
             data = {
                 "version": CACHE_VERSION,
                 "files": self._cache,
+                "mtimes": self._mtimes,
+                "sizes": self._sizes,
             }
 
             # Create secure temporary file in same directory (for atomic rename)
@@ -306,6 +324,21 @@ class FileCache:
         except OSError:
             return index, file_path, None, None
 
+    def _stat_file(self, file_path: Path) -> os.stat_result | None:
+        """Return file stat data, or None when the file cannot be read."""
+        try:
+            return file_path.stat()
+        except OSError:
+            return None
+
+    def _metadata_matches(self, rel_path: str, stat_result: os.stat_result) -> bool:
+        """Return whether cached mtime/size metadata matches current file state."""
+        return (
+            self._cache.get(rel_path) is not None
+            and self._mtimes.get(rel_path) == stat_result.st_mtime_ns
+            and self._sizes.get(rel_path) == stat_result.st_size
+        )
+
     def get_changed_files(
         self,
         files: list[Path],
@@ -333,43 +366,76 @@ class FileCache:
         hash_results: list[tuple[int, Path, str | None, str | None] | None] = [
             None
         ] * total
-        max_workers = self._hash_worker_count(total)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(self._compute_file_hash, i, file_path)
-                for i, file_path in enumerate(files)
-            ]
-            for completed, future in enumerate(as_completed(futures), start=1):
-                if on_progress:
-                    on_progress(f"Hashing files... {completed}/{total}")
-                index, file_path, rel_path, current_hash = future.result()
-                hash_results[index] = (index, file_path, rel_path, current_hash)
+        files_to_hash: list[tuple[int, Path]] = []
+        for index, file_path in enumerate(files):
+            try:
+                rel_path = str(file_path.relative_to(self.source_path))
+            except ValueError:
+                hash_results[index] = (index, file_path, None, None)
+                continue
+
+            stat_result = self._stat_file(file_path)
+            if stat_result is None:
+                hash_results[index] = (index, file_path, None, None)
+                continue
+
+            if self._metadata_matches(rel_path, stat_result):
+                metadata_cached_hash = self._cache[rel_path]
+                computed_hashes[rel_path] = metadata_cached_hash
+                stats.skipped_files += 1
+            else:
+                files_to_hash.append((index, file_path))
+
+        if files_to_hash:
+            max_workers = self._hash_worker_count(len(files_to_hash))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(self._compute_file_hash, i, file_path)
+                    for i, file_path in files_to_hash
+                ]
+                for completed, future in enumerate(as_completed(futures), start=1):
+                    if on_progress:
+                        on_progress(
+                            f"Hashing files... {completed}/{len(files_to_hash)}"
+                        )
+                    (
+                        result_index,
+                        result_file_path,
+                        result_rel_path,
+                        result_hash,
+                    ) = future.result()
+                    hash_results[result_index] = (
+                        result_index,
+                        result_file_path,
+                        result_rel_path,
+                        result_hash,
+                    )
 
         for result in hash_results:
             if result is None:
                 continue
-            _, file_path, rel_path, current_hash = result
+            _, result_file_path, result_rel_path, result_hash = result
 
-            if rel_path is not None and current_hash is not None:
-                computed_hashes[rel_path] = current_hash
-                cached_hash = self._cache.get(rel_path)
+            if result_rel_path is not None and result_hash is not None:
+                computed_hashes[result_rel_path] = result_hash
+                result_cached_hash = self._cache.get(result_rel_path)
 
-                if current_hash != cached_hash:
-                    changed.append(file_path)
+                if result_hash != result_cached_hash:
+                    changed.append(result_file_path)
                     stats.changed_files += 1
                     # Reuse pre-computed size if available
-                    if file_sizes and file_path in file_sizes:
-                        stats.changed_size += file_sizes[file_path]
+                    if file_sizes and result_file_path in file_sizes:
+                        stats.changed_size += file_sizes[result_file_path]
                     else:
                         try:
-                            stats.changed_size += file_path.stat().st_size
+                            stats.changed_size += result_file_path.stat().st_size
                         except OSError:
                             pass
                 else:
                     stats.skipped_files += 1
             else:
                 # File read error, treat as changed
-                changed.append(file_path)
+                changed.append(result_file_path)
                 stats.changed_files += 1
 
         return changed, stats, computed_hashes
@@ -391,12 +457,18 @@ class FileCache:
                     self._cache[rel_path] = computed_hashes[rel_path]
                 else:
                     self._cache[rel_path] = self.compute_hash(file_path)
+                stat_result = self._stat_file(file_path)
+                if stat_result is not None:
+                    self._mtimes[rel_path] = stat_result.st_mtime_ns
+                    self._sizes[rel_path] = stat_result.st_size
             except OSError:
                 pass  # Skip files that can't be read
 
     def clear(self) -> None:
         """Clear the cache."""
         self._cache = {}
+        self._mtimes = {}
+        self._sizes = {}
 
     def get_deleted_files(self, current_files: list[Path]) -> list[str]:
         """Get list of files that exist in cache but not in current files.
@@ -423,6 +495,8 @@ class FileCache:
             rel_path: Relative path of the file to remove.
         """
         self._cache.pop(rel_path, None)
+        self._mtimes.pop(rel_path, None)
+        self._sizes.pop(rel_path, None)
 
     def has_any_changed(self, files: list[Path]) -> bool:
         """Check if any file has changed, with early return on first change.
@@ -439,10 +513,19 @@ class FileCache:
         for file_path in files:
             try:
                 rel_path = str(file_path.relative_to(self.source_path))
+                stat_result = self._stat_file(file_path)
+                if stat_result is None:
+                    return True
+
+                if self._metadata_matches(rel_path, stat_result):
+                    continue
+
                 current_hash = self.compute_hash(file_path)
                 cached_hash = self._cache.get(rel_path)
                 if current_hash != cached_hash:
                     return True
+                self._mtimes[rel_path] = stat_result.st_mtime_ns
+                self._sizes[rel_path] = stat_result.st_size
             except OSError:
                 # File read error, treat as changed
                 return True
