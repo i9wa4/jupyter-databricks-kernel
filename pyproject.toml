@@ -29,6 +29,7 @@ dependencies = [
 ]
 
 [project.scripts]
+run       = "jupyter_databricks_kernel.runner:cli_run"
 run-py    = "jupyter_databricks_kernel.runner:cli_run_py"
 run-db-py = "jupyter_databricks_kernel.runner:cli_run_db_py"
 run-ipynb = "jupyter_databricks_kernel.runner:cli_run_ipynb"
