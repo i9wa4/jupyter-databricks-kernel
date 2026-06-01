@@ -208,26 +208,27 @@ If the cluster is stopped, kernel startup may take 5-6 minutes. Increase
 jupyter execute notebook.ipynb --kernel_name=databricks --startup_timeout=600
 ```
 
-### 5.3. Runner CLI (`run`)
+### 5.3. Runner CLI (`databricks-run`)
 
 Execute scripts and notebooks directly without launching Jupyter:
 
 ```bash
-uv run run path/to/script.py
-uv run run path/to/notebook.db.py
-uv run run path/to/notebook.ipynb
+uv run databricks-run path/to/script.py
+uv run databricks-run path/to/notebook.db.py
+uv run databricks-run path/to/notebook.ipynb
 ```
 
-The unified `run` command dispatches by file extension. Use `--format` to
-override detection:
+The unified `databricks-run` command dispatches by file extension. Use
+`--format` to override detection:
 
 ```bash
-uv run run --format db-py path/to/notebook.py
+uv run databricks-run --format db-py path/to/notebook.py
 ```
 
 The previous entry points remain available as compatibility aliases:
 
 ```bash
+uv run run path/to/script.py
 uv run run-py path/to/script.py
 uv run run-db-py path/to/notebook.py
 uv run run-ipynb path/to/notebook.ipynb
@@ -251,7 +252,7 @@ for the required separate backend design.
 | Timeout handling | Cluster command is cancelled; error written to output file |
 | Exit code | Exits with code 1 on error or timeout; code 0 on success |
 | `run-ipynb --inplace` | Writes cell outputs back into the notebook; backup at `<path>.bak` |
-| `run --serverless` | Recognized, but exits with an unsupported-backend error |
+| `databricks-run --serverless` | Recognized, but exits with an unsupported-backend error |
 
 ## 6. Papermill Integration
 

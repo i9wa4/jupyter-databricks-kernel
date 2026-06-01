@@ -368,7 +368,7 @@ def _cli_dispatch(default_format: RunFormat | None = None) -> None:
 
 
 def cli_run() -> None:
-    """Unified CLI entry point for Databricks runner execution."""
+    """Unified CLI entry point for databricks-run."""
     _cli_dispatch()
 
 

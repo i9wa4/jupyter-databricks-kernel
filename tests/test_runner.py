@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -341,6 +342,18 @@ class TestWriteOutput:
 class TestCliRun:
     """Tests for unified CLI behavior."""
 
+    def test_databricks_run_console_entry_is_primary_unified_command(self) -> None:
+        """databricks-run exposes the unified CLI while aliases remain wired."""
+        pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        scripts = pyproject["project"]["scripts"]
+
+        assert scripts["databricks-run"] == "jupyter_databricks_kernel.runner:cli_run"
+        assert scripts["run"] == "jupyter_databricks_kernel.runner:cli_run"
+        assert scripts["run-py"] == "jupyter_databricks_kernel.runner:cli_run_py"
+        assert scripts["run-db-py"] == "jupyter_databricks_kernel.runner:cli_run_db_py"
+        assert scripts["run-ipynb"] == "jupyter_databricks_kernel.runner:cli_run_ipynb"
+
     def test_unified_cli_dispatches_by_extension(self, tmp_path: Path) -> None:
         """cli_run infers the runner from the input file extension."""
         import sys
@@ -354,7 +367,7 @@ class TestCliRun:
             patch.object(
                 sys,
                 "argv",
-                ["run", str(py_file), "--output-dir", str(output_dir)],
+                ["databricks-run", str(py_file), "--output-dir", str(output_dir)],
             ),
             patch("jupyter_databricks_kernel.config.Config.load"),
             patch(
@@ -380,7 +393,9 @@ class TestCliRun:
         executor = _make_executor(output="db")
 
         with (
-            patch.object(sys, "argv", ["run", "--format", "db-py", str(py_file)]),
+            patch.object(
+                sys, "argv", ["databricks-run", "--format", "db-py", str(py_file)]
+            ),
             patch("jupyter_databricks_kernel.config.Config.load"),
             patch(
                 "jupyter_databricks_kernel.executor.DatabricksExecutor",
@@ -509,7 +524,7 @@ class TestCliRun:
         py_file.write_text("print('serverless')\n")
 
         with (
-            patch.object(sys, "argv", ["run", "--serverless", str(py_file)]),
+            patch.object(sys, "argv", ["databricks-run", "--serverless", str(py_file)]),
             pytest.raises(SystemExit) as exc_info,
         ):
             cli_run()
