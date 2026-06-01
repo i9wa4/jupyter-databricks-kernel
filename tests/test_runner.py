@@ -393,9 +393,7 @@ class TestCliRun:
             "print('db')\n", timeout=timedelta(seconds=600)
         )
 
-    def test_run_py_console_entry_alias_uses_py_format(
-        self, tmp_path: Path
-    ) -> None:
+    def test_run_py_console_entry_alias_uses_py_format(self, tmp_path: Path) -> None:
         """The run-py console entry keeps the legacy py default format."""
         import sys
 
