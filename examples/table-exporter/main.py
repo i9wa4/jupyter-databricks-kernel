@@ -28,7 +28,8 @@ def run(
 ) -> None:
     """Export an existing table to DBFS/S3.
 
-    Suitable for `uv run run-ipynb` and interactive Databricks notebook use.
+    Suitable for `uv run databricks-run` and interactive Databricks notebook use.
+    The `run-ipynb` command remains available as a compatibility alias.
     """
     table_name = validate_table_name(table_name)
     output_path = validate_output_path(output_path)

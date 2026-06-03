@@ -35,5 +35,7 @@ See: [table-exporter/README.md](./table-exporter/README.md)
 
    ```bash
    jupyter lab launcher.ipynb        # interactive (with widget UI)
-   uv run run-ipynb launcher.ipynb   # CLI (no kernel startup needed)
+   uv run databricks-run launcher.ipynb   # CLI (no kernel startup needed)
    ```
+
+   `run-ipynb` remains available as a compatibility alias.
