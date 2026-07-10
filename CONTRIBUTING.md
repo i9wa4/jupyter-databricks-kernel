@@ -49,9 +49,8 @@ uv run pytest
 published in the last 3 days. This is a supply-chain guard: it gives the
 community a short window to catch and report compromised or buggy releases
 before this project can adopt them, mirroring npm/pnpm's `minimumReleaseAge`.
-Background: [この記事](https://zenn.dev/watany/articles/a81a6122864539)
-("これ入れたい。3daysで" — "I want to incorporate this, within 3 days" — was the
-original request that started this).
+Background:
+[uv's `exclude-newer` as a supply-chain guard](https://zenn.dev/watany/articles/a81a6122864539).
 
 The 3-day window is intentionally aligned to `.github/dependabot.yml`'s
 minimum `semver-patch-days: 3` cooldown tier, not its `default-days: 7`
