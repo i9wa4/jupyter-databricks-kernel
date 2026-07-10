@@ -60,9 +60,10 @@ tightest tier Dependabot uses. A wider window (e.g. 7 days) would let CI's
 non-frozen `uv run pytest` re-resolve refuse a patch-level version
 Dependabot already proposed at day 3.
 
-This applies to the root package only. `examples/table-exporter` is a
-separately-locked demo project and does not currently have a matching
-`exclude-newer` setting or lock-check coverage (tracked as a fast-follow).
+This applies to both the root package and `examples/table-exporter` (a
+separately-locked demo project): each carries its own
+`[tool.uv] exclude-newer = "3 days"` and a dedicated `uv-lock-check`
+pre-commit hook enforcing its lock freshness.
 
 If `uv add`/`uv lock` unexpectedly refuses a package you need, it is
 almost always because the version was published within the last 3 days —

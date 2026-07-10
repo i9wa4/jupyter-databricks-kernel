@@ -13,6 +13,9 @@ dependencies = [
     "jupyter-databricks-kernel",
 ]
 
+[tool.uv]
+exclude-newer = "3 days"
+
 [tool.uv.sources]
 jupyter-databricks-kernel = { path = "../.." }
 
