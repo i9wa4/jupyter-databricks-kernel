@@ -42,6 +42,35 @@ uv run pytest
 | `uv run mypy src`    | Type check           |
 | `uv run jupyter-lab` | Start JupyterLab     |
 
+### 1.5. Dependency Freshness Policy
+
+`pyproject.toml` sets `[tool.uv] exclude-newer = "3 days"`, so `uv lock`
+and `uv sync`/`uv add` (when they need to re-resolve) refuse any package
+version published in the last 3 days. This is a supply-chain guard: it
+gives the community a short window to catch and report compromised or
+buggy releases before this project can adopt them, mirroring npm/pnpm's
+`minimumReleaseAge`. Background:
+[この記事](https://zenn.dev/watany/articles/a81a6122864539) ("これ入れたい。3daysで" — "I want to
+incorporate this, within 3 days" — was the original request that started
+this).
+
+The 3-day window is intentionally aligned to `.github/dependabot.yml`'s
+minimum `semver-patch-days: 3` cooldown tier, not its `default-days: 7`
+tier: `exclude-newer` only needs to be old enough to admit any version
+Dependabot could plausibly have already opened a PR for, and 3 days is the
+tightest tier Dependabot uses. A wider window (e.g. 7 days) would let CI's
+non-frozen `uv run pytest` re-resolve refuse a patch-level version
+Dependabot already proposed at day 3.
+
+This applies to the root package only. `examples/table-exporter` is a
+separately-locked demo project and does not currently have a matching
+`exclude-newer` setting or lock-check coverage (tracked as a fast-follow).
+
+If `uv add`/`uv lock` unexpectedly refuses a package you need, it is
+almost always because the version was published within the last 3 days —
+wait a few days, or use `exclude-newer-package` to override the cutoff for
+that one package if there is a specific reason to trust it early.
+
 ## 2. Project Structure
 
 ```text
