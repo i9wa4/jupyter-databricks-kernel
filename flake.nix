@@ -124,9 +124,23 @@
                 pass_filenames = false;
               };
 
+              uv-sync-frozen-check = {
+                enable = true;
+                entry = "${pkgs.uv}/bin/uv sync --frozen --no-managed-python --python ${projectPython}/bin/python3";
+                files = "^(pyproject\\.toml|uv\\.lock)$";
+                pass_filenames = false;
+              };
+
               uv-lock-check-table-exporter = {
                 enable = true;
                 entry = "${pkgs.uv}/bin/uv lock --check --no-managed-python --python ${projectPython}/bin/python3 --project examples/table-exporter";
+                files = "^examples/table-exporter/(pyproject\\.toml|uv\\.lock)$";
+                pass_filenames = false;
+              };
+
+              uv-sync-frozen-check-table-exporter = {
+                enable = true;
+                entry = "${pkgs.uv}/bin/uv sync --frozen --no-managed-python --python ${projectPython}/bin/python3 --project examples/table-exporter";
                 files = "^examples/table-exporter/(pyproject\\.toml|uv\\.lock)$";
                 pass_filenames = false;
               };
