@@ -136,6 +136,56 @@ def test_main_defaults_file_format_to_json(monkeypatch, table_exporter_modules) 
     ]
 
 
+def test_params_fall_back_to_environment_without_dbutils(
+    monkeypatch, table_exporter_modules
+) -> None:
+    _main, _validator = table_exporter_modules
+    params = sys.modules["common.params"]
+    monkeypatch.delattr(params, "dbutils", raising=False)
+    monkeypatch.setenv("TABLE_NAME", "catalog.schema.table")
+
+    assert params.get_required_param("table_name") == "catalog.schema.table"
+    assert params.get_param("file_format", "json") == "json"
+
+
+def test_params_propagate_widget_name_error(
+    monkeypatch, table_exporter_modules
+) -> None:
+    _main, _validator = table_exporter_modules
+    params = sys.modules["common.params"]
+
+    class Widgets:
+        def get(self, name: str) -> str:
+            raise NameError("unrelated internal NameError")
+
+    class Dbutils:
+        widgets = Widgets()
+
+    monkeypatch.setattr(params, "dbutils", Dbutils(), raising=False)
+
+    with pytest.raises(NameError, match="unrelated internal NameError"):
+        params.get_param("file_format", "json")
+
+
+def test_params_prefer_widgets_over_environment(
+    monkeypatch, table_exporter_modules
+) -> None:
+    _main, _validator = table_exporter_modules
+    params = sys.modules["common.params"]
+
+    class Widgets:
+        def get(self, name: str) -> str:
+            return "widget-value"
+
+    class Dbutils:
+        widgets = Widgets()
+
+    monkeypatch.setattr(params, "dbutils", Dbutils(), raising=False)
+    monkeypatch.setenv("FILE_FORMAT", "environment-value")
+
+    assert params.get_param("file_format", "json") == "widget-value"
+
+
 @pytest.mark.parametrize(
     "path",
     [
