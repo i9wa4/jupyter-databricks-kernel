@@ -21,7 +21,9 @@ from jupyter_databricks_kernel.sync import (
     FileCache,
     FileSizeError,
     FileSync,
+    SetupError,
     SyncStats,
+    build_command_api_archive_cleanup_command,
     build_command_api_chunk_write_command,
     count_command_api_base64_chunks,
     get_cache_dir,
@@ -769,6 +771,100 @@ class TestFormatSize:
         """Test formatting megabytes."""
         assert file_sync._format_size(1024 * 1024) == "1 MB"
         assert file_sync._format_size(int(2.5 * 1024 * 1024)) == "2.5 MB"
+
+
+class TestSyncAndSetup:
+    """Tests for the shared upload and remote setup lifecycle."""
+
+    def test_reuses_executor_for_upload_and_setup(self, file_sync: FileSync) -> None:
+        """One executor context performs both project upload and setup steps."""
+        executor = MagicMock(context_id="context-id")
+        stats = SyncStats(cluster_zip_path="/tmp/project.zip")
+        setup_steps = [("Configuring paths", "sys.path.insert(0, '/tmp/project')")]
+        executor.execute.return_value = MagicMock(status="ok")
+
+        with (
+            patch.object(file_sync, "needs_sync", return_value=True),
+            patch.object(file_sync, "sync", return_value=stats) as sync,
+            patch.object(file_sync, "get_setup_steps", return_value=setup_steps),
+        ):
+            result = file_sync.sync_and_setup(executor)
+
+        assert result is stats
+        sync.assert_called_once_with(on_progress=None, executor=executor)
+        executor.create_context.assert_not_called()
+        executor.execute.assert_called_once_with(
+            "sys.path.insert(0, '/tmp/project')", allow_reconnect=False
+        )
+
+    def test_skips_upload_and_setup_when_no_sync_is_needed(
+        self, file_sync: FileSync
+    ) -> None:
+        """A clean project does not create a context or execute setup code."""
+        executor = MagicMock()
+
+        with (
+            patch.object(file_sync, "needs_sync", return_value=False),
+            patch.object(file_sync, "sync") as sync,
+        ):
+            result = file_sync.sync_and_setup(executor)
+
+        assert result is None
+        sync.assert_not_called()
+        executor.create_context.assert_not_called()
+        executor.execute.assert_not_called()
+
+    def test_reports_the_failed_remote_setup_step(self, file_sync: FileSync) -> None:
+        """Setup errors identify the step that did not complete."""
+        executor = MagicMock(context_id="context-id")
+        stats = SyncStats(cluster_zip_path="/tmp/project.zip")
+        executor.execute.return_value = MagicMock(
+            status="error", error="permission denied"
+        )
+
+        with (
+            patch.object(file_sync, "needs_sync", return_value=True),
+            patch.object(file_sync, "sync", return_value=stats),
+            patch.object(
+                file_sync,
+                "get_setup_steps",
+                return_value=[("Extracting files", "extract()")],
+            ),
+            pytest.raises(SetupError, match="Extracting files") as exc_info,
+        ):
+            file_sync.sync_and_setup(executor)
+
+        assert exc_info.value.description == "Extracting files"
+        assert exc_info.value.error == "permission denied"
+
+    def test_cleanup_deletes_uid_fallback_transfer_archive(
+        self, file_sync: FileSync
+    ) -> None:
+        """Cleanup removes the actual driver-local archive via its upload context."""
+        client = MagicMock()
+        file_sync.client = client
+        file_sync._cluster_zip_path = (
+            "/tmp/jupyter_databricks_kernel_test-session_1000/project.zip"
+        )
+        file_sync._transfer_context_id = "caller-context"
+
+        file_sync.cleanup()
+
+        command = client.command_execution.execute.call_args.kwargs["command"]
+        assert "os.remove" in command
+        assert "jupyter_databricks_kernel_test-session_1000/project.zip" in command
+        assert client.command_execution.execute.call_args.kwargs["context_id"] == (
+            "caller-context"
+        )
+        assert file_sync._cluster_zip_path is None
+        assert file_sync._transfer_context_id is None
+
+    def test_archive_cleanup_command_ignores_absent_archive(self) -> None:
+        """A repeated cleanup does not fail when setup already removed the archive."""
+        command = build_command_api_archive_cleanup_command("/tmp/project.zip")
+
+        assert 'os.remove("/tmp/project.zip")' in command
+        assert "except FileNotFoundError" in command
 
 
 class TestSyncStats:

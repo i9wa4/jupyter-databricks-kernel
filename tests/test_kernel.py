@@ -7,7 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from jupyter_databricks_kernel.executor import ExecutionResult
 from jupyter_databricks_kernel.kernel import DatabricksKernel
+from jupyter_databricks_kernel.sync import SetupError, SyncStats
 
 
 @pytest.fixture
@@ -121,6 +123,89 @@ class TestRestartBehavior:
         asyncio.run(mock_kernel.do_shutdown(restart=True))
 
         mock_kernel.file_sync.cleanup.assert_not_called()
+
+
+class TestSyncFiles:
+    """Tests for the kernel adapter around shared project synchronization."""
+
+    def test_sync_files_preserves_progress_and_executor_context(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """The adapter shares its executor while retaining frontend progress."""
+        executor = MagicMock(context_id="shared-context")
+        executor.execute.return_value = ExecutionResult(status="ok")
+        file_sync = MagicMock()
+        file_sync.needs_sync.return_value = True
+        stats = SyncStats(total_files=2, cluster_zip_path="/tmp/project.zip")
+        progress_messages: list[str] = []
+        spinner_calls: list[tuple[str, str]] = []
+
+        def sync_and_setup(
+            executor_arg: object,
+            *,
+            on_progress: object,
+            execute_setup: object,
+        ) -> SyncStats:
+            assert executor_arg is executor
+            assert callable(on_progress)
+            assert callable(execute_setup)
+            on_progress("Collecting files...")
+            on_progress("Uploading (1 KB)...")
+            execute_setup("Configuring paths", "setup_code")
+            return stats
+
+        def run_with_spinner(
+            message: str, func: object, code: str, **kwargs: object
+        ) -> ExecutionResult:
+            spinner_calls.append((message, code))
+            assert callable(func)
+            return func(code, **kwargs)
+
+        mock_kernel.executor = executor
+        mock_kernel.file_sync = file_sync
+        file_sync.sync_and_setup.side_effect = sync_and_setup
+
+        with (
+            patch.object(mock_kernel, "_send_sync_progress", progress_messages.append),
+            patch.object(
+                mock_kernel, "_run_with_spinner", side_effect=run_with_spinner
+            ),
+        ):
+            success, elapsed, file_count = mock_kernel._sync_files()
+
+        assert success is True
+        assert elapsed >= 0
+        assert file_count == 2
+        assert progress_messages == [
+            "[1/8] Collecting files...",
+            "[4/8] Uploading (1 KB)...",
+        ]
+        assert spinner_calls == [("[5/8] Configuring paths...", "setup_code")]
+        executor.create_context.assert_not_called()
+        executor.execute.assert_called_once_with("setup_code", allow_reconnect=False)
+        assert mock_kernel._last_cluster_zip_path == "/tmp/project.zip"
+
+    def test_sync_files_reports_shared_setup_error(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """A shared setup failure keeps the kernel's specific error response."""
+        mock_kernel.executor = MagicMock(context_id="shared-context")
+        mock_kernel.file_sync = MagicMock()
+        mock_kernel.file_sync.needs_sync.return_value = True
+        mock_kernel.file_sync.sync_and_setup.side_effect = SetupError(
+            "Extracting files", "permission denied"
+        )
+
+        success, elapsed, file_count = mock_kernel._sync_files()
+
+        assert success is False
+        assert elapsed == 0.0
+        assert file_count == 0
+        response = mock_kernel.send_response.call_args
+        assert response.args[1] == "stream"
+        assert response.args[2]["text"] == (
+            "Setup failed at 'Extracting files': permission denied\n"
+        )
 
 
 class TestReconnectionHandling:

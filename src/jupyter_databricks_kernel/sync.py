@@ -137,10 +137,30 @@ with open("{cluster_zip_path}", "{mode}") as f:
 '''
 
 
+def build_command_api_archive_cleanup_command(cluster_zip_path: str) -> str:
+    """Build a remote command that removes a transferred project archive."""
+    return f'''
+import os
+try:
+    os.remove("{cluster_zip_path}")
+except FileNotFoundError:
+    pass
+'''
+
+
 class FileSizeError(Exception):
     """Exception raised when file size limits are exceeded."""
 
     pass
+
+
+class SetupError(RuntimeError):
+    """Raised when a remote project setup step cannot be completed."""
+
+    def __init__(self, description: str, error: str | None) -> None:
+        self.description = description
+        self.error = error
+        super().__init__(f"Setup failed at '{description}': {error}")
 
 
 @dataclass
@@ -586,6 +606,8 @@ class FileSync:
         self._pathspec_mtime: float = 0.0
         self._file_cache: FileCache | None = None
         self._command_context_id: str | None = None
+        self._transfer_context_id: str | None = None
+        self._cluster_zip_path: str | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
         """Ensure the WorkspaceClient is initialized.
@@ -967,6 +989,7 @@ class FileSync:
 
         if context_id is None:
             raise RuntimeError("Failed to create or retrieve execution context")
+        self._transfer_context_id = context_id
 
         # Create target directory on cluster with UID fallback
         target_dir = f"/tmp/jupyter_databricks_kernel_{self.session_id}"
@@ -1007,6 +1030,7 @@ print(target_dir)
         if not re.match(r"^/tmp/jupyter_databricks_kernel_[a-zA-Z0-9_-]+$", actual_dir):
             raise ValueError(f"Invalid directory path from cluster: {actual_dir}")
         cluster_zip_path = f"{actual_dir}/project.zip"
+        self._cluster_zip_path = cluster_zip_path
 
         # Send chunks via Command API — decode directly on cluster.
         for i, chunk_b64 in enumerate(iter_command_api_base64_chunks(zip_data)):
@@ -1072,6 +1096,36 @@ print(target_dir)
         """
         steps = self.get_setup_steps(cluster_zip_path)
         return "\n".join(code for _, code in steps)
+
+    def sync_and_setup(
+        self,
+        executor: DatabricksExecutor,
+        on_progress: SyncProgressCallback | None = None,
+        execute_setup: Callable[[str, str], Any] | None = None,
+    ) -> SyncStats | None:
+        """Synchronize project files and prepare their remote execution path.
+
+        Returns ``None`` when synchronization is not needed.  Callers may
+        provide ``execute_setup`` to add presentation-specific progress while
+        sharing the same upload, extraction, working-directory, and sys.path
+        setup lifecycle.
+        """
+        if not self.needs_sync():
+            return None
+
+        if executor.context_id is None:
+            executor.create_context()
+
+        stats = self.sync(on_progress=on_progress, executor=executor)
+        for description, code in self.get_setup_steps(stats.cluster_zip_path):
+            result = (
+                execute_setup(description, code)
+                if execute_setup is not None
+                else executor.execute(code, allow_reconnect=False)
+            )
+            if result.status != "ok":
+                raise SetupError(description, result.error)
+        return stats
 
     def get_setup_steps(self, cluster_zip_path: str) -> list[tuple[str, str]]:
         """Generate setup steps to run on the remote cluster.
@@ -1191,22 +1245,27 @@ del _extract_dir, _cluster_zip_path
         ]
 
     def cleanup(self) -> None:
-        """Clean up DBFS files and command execution context.
+        """Remove the driver-local transfer archive and owned command context."""
+        if self._cluster_zip_path and self._transfer_context_id:
+            try:
+                from datetime import timedelta
 
-        Note: The /tmp/jupyter_databricks_kernel/<project>/ path on the cluster
-        driver is not cleaned up here as it is inaccessible from the kernel side
-        and gets overwritten on the next sync.
-        """
-        if not self._synced:
-            return
+                from databricks.sdk.service import compute
 
-        dbfs_dir = f"/tmp/jupyter_databricks_kernel/{self.session_id}"
-
-        try:
-            client = self._ensure_client()
-            client.dbfs.delete(dbfs_dir, recursive=True)
-        except Exception as e:
-            logger.debug("DBFS cleanup error (ignored): %s", e)
+                client = self._ensure_client()
+                client.command_execution.execute(
+                    cluster_id=self.config.cluster_id,
+                    context_id=self._transfer_context_id,
+                    language=compute.Language.PYTHON,
+                    command=build_command_api_archive_cleanup_command(
+                        self._cluster_zip_path
+                    ),
+                ).result(timeout=timedelta(minutes=5))
+            except Exception as e:
+                logger.debug("Transfer archive cleanup error (ignored): %s", e)
+            finally:
+                self._cluster_zip_path = None
+                self._transfer_context_id = None
 
         # Clean up self-managed command execution context
         if self._command_context_id and self.config.cluster_id:

@@ -14,7 +14,7 @@ from ipykernel.kernelbase import Kernel
 from . import __version__
 from .config import Config
 from .executor import DatabricksExecutor
-from .sync import FileSync
+from .sync import FileSync, SetupError
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +180,7 @@ class DatabricksKernel(Kernel):
         """
         if self.file_sync is None or self.executor is None:
             return True, 0.0, 0
+        executor = self.executor
 
         if not self.file_sync.needs_sync():
             logger.debug("File sync skipped: no changes detected")
@@ -188,10 +189,6 @@ class DatabricksKernel(Kernel):
         try:
             logger.debug("Starting file sync")
             sync_start = time.time()
-
-            # Ensure executor context is created before sync
-            if self.executor.context_id is None:
-                self.executor.create_context()
 
             # Total steps: 4 local + 4 remote = 8
             total_steps = 8
@@ -211,32 +208,27 @@ class DatabricksKernel(Kernel):
                     step_msg = message
                 self._send_sync_progress(step_msg)
 
-            # Upload files with progress callback
-            # IMPORTANT: Pass executor to share execution context
-            stats = self.file_sync.sync(
-                on_progress=sync_progress, executor=self.executor
-            )
-            self._last_cluster_zip_path = stats.cluster_zip_path
-
-            # Execute setup steps on remote with progress
-            setup_steps = self.file_sync.get_setup_steps(stats.cluster_zip_path)
-            for i, (description, code) in enumerate(setup_steps):
-                step_num = 5 + i  # Steps 5-8
+            def execute_setup(description: str, code: str) -> Any:
+                step_num = 5 + len(executed_setup_steps)
                 result = self._run_with_spinner(
                     f"[{step_num}/{total_steps}] {description}...",
-                    self.executor.execute,
+                    executor.execute,
                     code,
                     allow_reconnect=False,
                 )
+                executed_setup_steps.append(description)
+                return result
 
-                if result.status != "ok":
-                    err_msg = f"Setup failed at '{description}': {result.error}\n"
-                    self.send_response(
-                        self.iopub_socket,
-                        "stream",
-                        {"name": "stderr", "text": err_msg},
-                    )
-                    return False, 0.0, 0
+            executed_setup_steps: list[str] = []
+            stats = self.file_sync.sync_and_setup(
+                executor,
+                on_progress=sync_progress,
+                execute_setup=execute_setup,
+            )
+            if stats is None:
+                logger.debug("File sync skipped: no changes detected")
+                return True, 0.0, 0
+            self._last_cluster_zip_path = stats.cluster_zip_path
 
             sync_elapsed = time.time() - sync_start
             logger.debug("File sync completed: %d files", stats.total_files)
@@ -247,6 +239,16 @@ class DatabricksKernel(Kernel):
 
             return True, sync_elapsed, stats.total_files
 
+        except SetupError as e:
+            self.send_response(
+                self.iopub_socket,
+                "stream",
+                {
+                    "name": "stderr",
+                    "text": f"Setup failed at '{e.description}': {e.error}\n",
+                },
+            )
+            return False, 0.0, 0
         except Exception as e:
             logger.warning("File sync failed: %s", e)
             self.send_response(
