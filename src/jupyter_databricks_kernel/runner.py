@@ -4,14 +4,29 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from .sync import FileSync
+
 if TYPE_CHECKING:
+    from .config import Config
     from .executor import DatabricksExecutor, ExecutionResult
 
 RunFormat = Literal["py", "db-py", "ipynb"]
+
+
+def prepare_project(config: Config, executor: DatabricksExecutor) -> FileSync:
+    """Synchronize the configured project and prepare it on the driver."""
+    file_sync = FileSync(config, uuid.uuid4().hex[:8], caller="databricks-run")
+    try:
+        file_sync.sync_and_setup(executor)
+    except Exception:
+        file_sync.cleanup()
+        raise
+    return file_sync
 
 
 def detect_run_format(
@@ -349,8 +364,10 @@ def _cli_dispatch(default_format: RunFormat | None = None) -> None:
     config = Config.load()
     executor = DatabricksExecutor(config)
     executor.create_context()
+    file_sync: FileSync | None = None
     try:
         try:
+            file_sync = prepare_project(config, executor)
             result = run_file(
                 file_path,
                 executor,
@@ -362,6 +379,8 @@ def _cli_dispatch(default_format: RunFormat | None = None) -> None:
             result = ExecutionResult(status="error", error=str(e))
         write_output(result, file_path, output_dir)
     finally:
+        if file_sync is not None:
+            file_sync.cleanup()
         executor.destroy_context()
     if result.status == "error":
         sys.exit(1)

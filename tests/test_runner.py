@@ -7,7 +7,7 @@ import tomllib
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -18,6 +18,7 @@ from jupyter_databricks_kernel.runner import (
     cli_run_ipynb,
     cli_run_py,
     detect_run_format,
+    prepare_project,
     run_db_py,
     run_file,
     run_ipynb,
@@ -91,6 +92,39 @@ class TestRunFormatDispatch:
 
         with pytest.raises(ValueError, match="--inplace"):
             run_file(py_file, _make_executor(), inplace=True)
+
+
+class TestProjectPreparation:
+    """Tests for shared project synchronization before runner execution."""
+
+    def test_uses_file_sync_shared_setup_lifecycle(self) -> None:
+        """Runner preparation delegates upload and remote setup to FileSync."""
+        config = MagicMock()
+        executor = MagicMock()
+        file_sync = MagicMock()
+
+        with patch(
+            "jupyter_databricks_kernel.runner.FileSync", return_value=file_sync
+        ) as file_sync_class:
+            prepare_project(config, executor)
+
+        file_sync_class.assert_called_once_with(config, ANY, caller="databricks-run")
+        file_sync.sync_and_setup.assert_called_once_with(executor)
+
+    def test_cleans_up_when_project_preparation_fails(self) -> None:
+        """A failed upload or setup does not leave runner sync state behind."""
+        config = MagicMock()
+        executor = MagicMock()
+        file_sync = MagicMock()
+        file_sync.sync_and_setup.side_effect = RuntimeError("setup failed")
+
+        with (
+            patch("jupyter_databricks_kernel.runner.FileSync", return_value=file_sync),
+            pytest.raises(RuntimeError, match="setup failed"),
+        ):
+            prepare_project(config, executor)
+
+        file_sync.cleanup.assert_called_once_with()
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +388,124 @@ class TestCliRun:
         assert scripts["run-db-py"] == "jupyter_databricks_kernel.runner:cli_run_db_py"
         assert scripts["run-ipynb"] == "jupyter_databricks_kernel.runner:cli_run_ipynb"
 
+    @pytest.mark.parametrize(
+        "file_name", ["script.py", "notebook.db.py", "notebook.ipynb"]
+    )
+    def test_cli_prepares_before_dispatch_and_cleans_up_for_each_format(
+        self, tmp_path: Path, file_name: str
+    ) -> None:
+        """Every unified format prepares the project before dispatching it."""
+        import sys
+
+        file_path = tmp_path / file_name
+        output_dir = tmp_path / "outputs"
+        config = MagicMock()
+        executor = _make_executor()
+        file_sync = MagicMock()
+        events: list[str] = []
+
+        def prepare(config_arg: object, executor_arg: object) -> MagicMock:
+            assert config_arg is config
+            assert executor_arg is executor
+            events.append("prepare")
+            return file_sync
+
+        def dispatch(*args: object, **kwargs: object) -> ExecutionResult:
+            events.append("dispatch")
+            return ExecutionResult(status="ok", output="done")
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["databricks-run", str(file_path), "--output-dir", str(output_dir)],
+            ),
+            patch("jupyter_databricks_kernel.config.Config.load", return_value=config),
+            patch(
+                "jupyter_databricks_kernel.executor.DatabricksExecutor",
+                return_value=executor,
+            ),
+            patch(
+                "jupyter_databricks_kernel.runner.prepare_project", side_effect=prepare
+            ),
+            patch("jupyter_databricks_kernel.runner.run_file", side_effect=dispatch),
+        ):
+            cli_run()
+
+        assert events == ["prepare", "dispatch"]
+        file_sync.cleanup.assert_called_once_with()
+        executor.destroy_context.assert_called_once_with()
+
+    def test_cli_preparation_failure_writes_error_and_destroys_context(
+        self, tmp_path: Path
+    ) -> None:
+        """Preparation errors retain the CLI's output, exit, and context lifecycle."""
+        import sys
+
+        file_path = tmp_path / "script.py"
+        output_dir = tmp_path / "outputs"
+        executor = _make_executor()
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["databricks-run", str(file_path), "--output-dir", str(output_dir)],
+            ),
+            patch("jupyter_databricks_kernel.config.Config.load"),
+            patch(
+                "jupyter_databricks_kernel.executor.DatabricksExecutor",
+                return_value=executor,
+            ),
+            patch(
+                "jupyter_databricks_kernel.runner.prepare_project",
+                side_effect=RuntimeError("setup failed"),
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            cli_run()
+
+        assert exc_info.value.code == 1
+        assert "setup failed" in next(output_dir.glob("*.output.md")).read_text()
+        executor.destroy_context.assert_called_once_with()
+
+    def test_cli_ipynb_preserves_inplace_after_preparation(
+        self, tmp_path: Path
+    ) -> None:
+        """The shared preparation adapter preserves notebook in-place dispatch."""
+        import sys
+
+        file_path = tmp_path / "notebook.ipynb"
+        executor = _make_executor()
+        file_sync = MagicMock()
+        events: list[str] = []
+
+        def prepare(*args: object) -> MagicMock:
+            events.append("prepare")
+            return file_sync
+
+        def dispatch(*args: object, **kwargs: object) -> ExecutionResult:
+            events.append("dispatch")
+            assert kwargs["inplace"] is True
+            return ExecutionResult(status="ok")
+
+        with (
+            patch.object(sys, "argv", ["databricks-run", str(file_path), "--inplace"]),
+            patch("jupyter_databricks_kernel.config.Config.load"),
+            patch(
+                "jupyter_databricks_kernel.executor.DatabricksExecutor",
+                return_value=executor,
+            ),
+            patch(
+                "jupyter_databricks_kernel.runner.prepare_project", side_effect=prepare
+            ),
+            patch("jupyter_databricks_kernel.runner.run_file", side_effect=dispatch),
+        ):
+            cli_run()
+
+        assert events == ["prepare", "dispatch"]
+        file_sync.cleanup.assert_called_once_with()
+
     def test_unified_cli_dispatches_by_extension(self, tmp_path: Path) -> None:
         """cli_run infers the runner from the input file extension."""
         import sys
@@ -374,6 +526,7 @@ class TestCliRun:
                 "jupyter_databricks_kernel.executor.DatabricksExecutor",
                 return_value=executor,
             ),
+            patch("jupyter_databricks_kernel.runner.prepare_project"),
         ):
             cli_run()
 
@@ -401,6 +554,7 @@ class TestCliRun:
                 "jupyter_databricks_kernel.executor.DatabricksExecutor",
                 return_value=executor,
             ),
+            patch("jupyter_databricks_kernel.runner.prepare_project"),
         ):
             cli_run()
 
@@ -428,6 +582,7 @@ class TestCliRun:
                 "jupyter_databricks_kernel.executor.DatabricksExecutor",
                 return_value=executor,
             ),
+            patch("jupyter_databricks_kernel.runner.prepare_project"),
         ):
             cli_run_py()
 
@@ -458,6 +613,7 @@ class TestCliRun:
                 "jupyter_databricks_kernel.executor.DatabricksExecutor",
                 return_value=executor,
             ),
+            patch("jupyter_databricks_kernel.runner.prepare_project"),
         ):
             cli_run_db_py()
 
@@ -506,6 +662,7 @@ class TestCliRun:
                 "jupyter_databricks_kernel.executor.DatabricksExecutor",
                 return_value=executor,
             ),
+            patch("jupyter_databricks_kernel.runner.prepare_project"),
         ):
             cli_run_ipynb()
 
