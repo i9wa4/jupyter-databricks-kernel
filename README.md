@@ -27,6 +27,14 @@ A Jupyter kernel for complete remote execution on Databricks clusters.
   Token, OAuth M2M with Service Principal, etc.)
 - Classic all-purpose cluster
 
+### 2.1. Python 3.11 Deprecation
+
+Python 3.11 remains supported for existing environments, but it is deprecated
+and will be removed in v2.0 as part of the planned 2027 breaking-release work.
+Local environments should migrate to Python 3.12 or later before moving to
+v2.0. Managed-runtime users should move from Databricks Runtime 15.4 LTS to
+Databricks Runtime 16.4 LTS or 17.3 LTS.
+
 ## 3. Quick Start
 
 1. Install the kernel:

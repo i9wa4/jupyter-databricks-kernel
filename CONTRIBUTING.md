@@ -11,6 +11,11 @@ jupyter-databricks-kernel!
 - [uv](https://docs.astral.sh/uv/) for dependency management
 - [Nix](https://nixos.org/) (recommended, for pre-commit hooks)
 
+Python 3.11 remains supported until v2.0, planned for 2027, but is deprecated.
+Local development environments should migrate to Python 3.12 or later before
+moving to v2.0. Managed-runtime users should move from Databricks Runtime 15.4
+LTS to Databricks Runtime 16.4 LTS or 17.3 LTS.
+
 ### 1.2. With Nix (recommended)
 
 ```bash
