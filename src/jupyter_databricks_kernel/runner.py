@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import shutil
 import uuid
 from datetime import datetime, timedelta
@@ -16,6 +18,36 @@ if TYPE_CHECKING:
     from .executor import DatabricksExecutor, ExecutionResult
 
 RunFormat = Literal["py", "db-py", "ipynb"]
+PACKAGE_LOGGER_NAME = "jupyter_databricks_kernel"
+CLI_LOG_HANDLER_NAME = "jupyter_databricks_kernel.cli"
+
+
+def configure_cli_logging() -> None:
+    """Configure runner logging from the optional log-level environment value."""
+    level_name = os.environ.get("JUPYTER_DATABRICKS_KERNEL_LOG_LEVEL")
+    if not level_name:
+        return
+
+    level = getattr(logging, level_name.upper(), None)
+    if not isinstance(level, int):
+        return
+
+    package_logger = logging.getLogger(PACKAGE_LOGGER_NAME)
+    package_logger.setLevel(level)
+    package_logger.propagate = False
+
+    for handler in package_logger.handlers:
+        if handler.get_name() == CLI_LOG_HANDLER_NAME:
+            handler.setLevel(level)
+            return
+
+    handler = logging.StreamHandler()
+    handler.set_name(CLI_LOG_HANDLER_NAME)
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    package_logger.addHandler(handler)
 
 
 def prepare_project(config: Config, executor: DatabricksExecutor) -> FileSync:
@@ -319,6 +351,8 @@ def _cli_dispatch(default_format: RunFormat | None = None) -> None:
     from .config import Config
     from .executor import DatabricksExecutor, ExecutionResult
 
+    configure_cli_logging()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("file", help="path to the file to execute")
     parser.add_argument(
@@ -363,7 +397,6 @@ def _cli_dispatch(default_format: RunFormat | None = None) -> None:
 
     config = Config.load()
     executor = DatabricksExecutor(config)
-    executor.create_context()
     file_sync: FileSync | None = None
     try:
         try:
