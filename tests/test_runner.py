@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import tomllib
 from datetime import timedelta
 from pathlib import Path
@@ -13,10 +14,13 @@ import pytest
 
 from jupyter_databricks_kernel.executor import ExecutionResult
 from jupyter_databricks_kernel.runner import (
+    CLI_LOG_HANDLER_NAME,
+    PACKAGE_LOGGER_NAME,
     cli_run,
     cli_run_db_py,
     cli_run_ipynb,
     cli_run_py,
+    configure_cli_logging,
     detect_run_format,
     prepare_project,
     run_db_py,
@@ -125,6 +129,96 @@ class TestProjectPreparation:
             prepare_project(config, executor)
 
         file_sync.cleanup.assert_called_once_with()
+
+
+class TestCliLogging:
+    """Tests for optional runner logging configuration."""
+
+    def test_configures_logging_from_environment(self) -> None:
+        """Benchmark runs can enable sync diagnostics through an env var."""
+        package_logger = logging.getLogger(PACKAGE_LOGGER_NAME)
+        old_level = package_logger.level
+        old_propagate = package_logger.propagate
+        old_handlers = list(package_logger.handlers)
+
+        with (
+            patch.dict(
+                "os.environ",
+                {"JUPYTER_DATABRICKS_KERNEL_LOG_LEVEL": "debug"},
+                clear=True,
+            ),
+        ):
+            try:
+                configure_cli_logging()
+
+                assert package_logger.level == logging.DEBUG
+                assert package_logger.propagate is False
+                cli_handlers = [
+                    handler
+                    for handler in package_logger.handlers
+                    if handler.get_name() == CLI_LOG_HANDLER_NAME
+                ]
+                assert len(cli_handlers) == 1
+                assert cli_handlers[0].level == logging.DEBUG
+            finally:
+                package_logger.handlers = old_handlers
+                package_logger.setLevel(old_level)
+                package_logger.propagate = old_propagate
+
+    def test_ignores_invalid_logging_level(self) -> None:
+        """Invalid log levels do not alter process logging."""
+        package_logger = logging.getLogger(PACKAGE_LOGGER_NAME)
+        old_level = package_logger.level
+        old_propagate = package_logger.propagate
+        old_handlers = list(package_logger.handlers)
+
+        with (
+            patch.dict(
+                "os.environ",
+                {"JUPYTER_DATABRICKS_KERNEL_LOG_LEVEL": "verbose"},
+                clear=True,
+            ),
+        ):
+            try:
+                configure_cli_logging()
+
+                assert package_logger.handlers == old_handlers
+                assert package_logger.level == old_level
+                assert package_logger.propagate is old_propagate
+            finally:
+                package_logger.handlers = old_handlers
+                package_logger.setLevel(old_level)
+                package_logger.propagate = old_propagate
+
+    def test_cli_logging_does_not_enable_unrelated_loggers(self) -> None:
+        """The package env var does not take ownership of root logging."""
+        package_logger = logging.getLogger(PACKAGE_LOGGER_NAME)
+        unrelated_logger = logging.getLogger("unrelated.package")
+        root_logger = logging.getLogger()
+        old_package_level = package_logger.level
+        old_package_propagate = package_logger.propagate
+        old_package_handlers = list(package_logger.handlers)
+        old_unrelated_level = unrelated_logger.level
+        old_root_level = root_logger.level
+
+        with (
+            patch.dict(
+                "os.environ",
+                {"JUPYTER_DATABRICKS_KERNEL_LOG_LEVEL": "debug"},
+                clear=True,
+            ),
+            patch("logging.basicConfig") as basic_config,
+        ):
+            try:
+                configure_cli_logging()
+
+                basic_config.assert_not_called()
+                assert unrelated_logger.level == old_unrelated_level
+                assert root_logger.level == old_root_level
+            finally:
+                package_logger.handlers = old_package_handlers
+                package_logger.setLevel(old_package_level)
+                package_logger.propagate = old_package_propagate
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +530,54 @@ class TestCliRun:
         file_sync.cleanup.assert_called_once_with()
         executor.destroy_context.assert_called_once_with()
 
+    def test_cli_leaves_context_creation_inside_preparation_boundary(
+        self, tmp_path: Path
+    ) -> None:
+        """CLI setup does not create a remote context before project preparation."""
+        import sys
+
+        file_path = tmp_path / "script.py"
+        output_dir = tmp_path / "outputs"
+        config = MagicMock()
+        executor = _make_executor()
+        file_sync = MagicMock()
+        events: list[str] = []
+
+        def prepare(config_arg: object, executor_arg: object) -> MagicMock:
+            assert config_arg is config
+            assert executor_arg is executor
+            executor.create_context.assert_not_called()
+            events.append("prepare")
+            executor.create_context()
+            return file_sync
+
+        def dispatch(*args: object, **kwargs: object) -> ExecutionResult:
+            events.append("dispatch")
+            return ExecutionResult(status="ok", output="done")
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["databricks-run", str(file_path), "--output-dir", str(output_dir)],
+            ),
+            patch("jupyter_databricks_kernel.config.Config.load", return_value=config),
+            patch(
+                "jupyter_databricks_kernel.executor.DatabricksExecutor",
+                return_value=executor,
+            ),
+            patch(
+                "jupyter_databricks_kernel.runner.prepare_project", side_effect=prepare
+            ),
+            patch("jupyter_databricks_kernel.runner.run_file", side_effect=dispatch),
+        ):
+            cli_run()
+
+        assert events == ["prepare", "dispatch"]
+        executor.create_context.assert_called_once_with()
+        file_sync.cleanup.assert_called_once_with()
+        executor.destroy_context.assert_called_once_with()
+
     def test_cli_preparation_failure_writes_error_and_destroys_context(
         self, tmp_path: Path
     ) -> None:
@@ -530,7 +672,7 @@ class TestCliRun:
         ):
             cli_run()
 
-        executor.create_context.assert_called_once_with()
+        executor.create_context.assert_not_called()
         executor.execute.assert_called_once_with(
             "print('cli')\n", timeout=timedelta(seconds=600)
         )

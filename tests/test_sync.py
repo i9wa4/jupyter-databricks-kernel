@@ -779,23 +779,99 @@ class TestSyncAndSetup:
     def test_reuses_executor_for_upload_and_setup(self, file_sync: FileSync) -> None:
         """One executor context performs both project upload and setup steps."""
         executor = MagicMock(context_id="context-id")
-        stats = SyncStats(cluster_zip_path="/tmp/project.zip")
-        setup_steps = [("Configuring paths", "sys.path.insert(0, '/tmp/project')")]
+        stats = SyncStats(
+            cluster_zip_path="/tmp/project.zip",
+            remote_calls=2,
+            sync_duration=1.0,
+        )
+        setup_steps = [
+            ("Extracting files", "extract()"),
+            ("Configuring paths", "sys.path.insert(0, '/tmp/project')"),
+        ]
         executor.execute.return_value = MagicMock(status="ok")
 
         with (
             patch.object(file_sync, "needs_sync", return_value=True),
             patch.object(file_sync, "sync", return_value=stats) as sync,
             patch.object(file_sync, "get_setup_steps", return_value=setup_steps),
+            patch(
+                "jupyter_databricks_kernel.sync.time.perf_counter",
+                side_effect=[10.0, 20.0, 20.25, 30.0, 30.5, 40.0],
+            ),
         ):
             result = file_sync.sync_and_setup(executor)
 
         assert result is stats
         sync.assert_called_once_with(on_progress=None, executor=executor)
         executor.create_context.assert_not_called()
-        executor.execute.assert_called_once_with(
+        assert executor.execute.call_count == 2
+        executor.execute.assert_any_call("extract()", allow_reconnect=False)
+        executor.execute.assert_any_call(
             "sys.path.insert(0, '/tmp/project')", allow_reconnect=False
         )
+        assert stats.remote_calls == 4
+        assert stats.remote_apply_duration == 0.25
+        assert stats.path_setup_duration == 0.5
+        assert stats.upload_duration == 0.0
+        assert stats.total_duration == 30.0
+        assert stats.sync_duration == 30.0
+
+    def test_counts_executor_context_creation_in_setup_boundary(
+        self, file_sync: FileSync
+    ) -> None:
+        """End-to-end setup stats include an executor context created up front."""
+        executor = MagicMock(context_id=None)
+        stats = SyncStats(cluster_zip_path="/tmp/project.zip", remote_calls=2)
+
+        with (
+            patch.object(file_sync, "needs_sync", return_value=True),
+            patch.object(file_sync, "sync", return_value=stats),
+            patch.object(file_sync, "get_setup_steps", return_value=[]),
+            patch(
+                "jupyter_databricks_kernel.sync.time.perf_counter",
+                side_effect=[5.0, 5.1, 5.4, 6.0],
+            ),
+        ):
+            result = file_sync.sync_and_setup(executor)
+
+        assert result is stats
+        executor.create_context.assert_called_once_with()
+        assert stats.context_setup_duration == pytest.approx(0.3)
+        assert stats.remote_calls == 3
+        assert stats.upload_duration == 0.0
+        assert stats.total_duration == 1.0
+        assert stats.sync_duration == 1.0
+
+    def test_total_duration_includes_needs_sync_preflight(
+        self, file_sync: FileSync
+    ) -> None:
+        """End-to-end setup timing starts before sync preflight checks."""
+        executor = MagicMock(context_id="context-id")
+        stats = SyncStats(cluster_zip_path="/tmp/project.zip", remote_calls=2)
+
+        def needs_sync_with_preflight() -> bool:
+            preflight_start = time.perf_counter()
+            preflight_end = time.perf_counter()
+            assert preflight_end - preflight_start == 1.0
+            return True
+
+        with (
+            patch.object(
+                file_sync, "needs_sync", side_effect=needs_sync_with_preflight
+            ),
+            patch.object(file_sync, "sync", return_value=stats),
+            patch.object(file_sync, "get_setup_steps", return_value=[]),
+            patch(
+                "jupyter_databricks_kernel.sync.time.perf_counter",
+                side_effect=[1.0, 2.0, 3.0, 6.0],
+            ),
+        ):
+            result = file_sync.sync_and_setup(executor)
+
+        assert result is stats
+        executor.create_context.assert_not_called()
+        assert stats.total_duration == 5.0
+        assert stats.sync_duration == 5.0
 
     def test_skips_upload_and_setup_when_no_sync_is_needed(
         self, file_sync: FileSync
@@ -875,27 +951,86 @@ class TestSyncStats:
         stats = SyncStats()
         assert stats.changed_files == 0
         assert stats.changed_size == 0
+        assert stats.deleted_files == 0
         assert stats.skipped_files == 0
         assert stats.total_files == 0
+        assert stats.upload_duration == 0.0
+        assert stats.total_duration == 0.0
         assert stats.sync_duration == 0.0
         assert stats.cluster_zip_path == ""
+        assert stats.source_size == 0
+        assert stats.archive_size == 0
+        assert stats.chunk_count == 0
+        assert stats.remote_calls == 0
+        assert stats.mode == "full"
+        assert stats.discovery_duration == 0.0
+        assert stats.change_detection_duration == 0.0
+        assert stats.archive_creation_duration == 0.0
+        assert stats.context_setup_duration == 0.0
+        assert stats.transfer_duration == 0.0
+        assert stats.remote_apply_duration == 0.0
+        assert stats.path_setup_duration == 0.0
 
     def test_with_values(self) -> None:
         """Test with custom values."""
         stats = SyncStats(
             changed_files=3,
             changed_size=1024,
+            deleted_files=2,
             skipped_files=10,
             total_files=13,
+            upload_duration=1.25,
+            total_duration=2.5,
             sync_duration=1.5,
             cluster_zip_path="/tmp/test/project.zip",
+            source_size=4096,
+            archive_size=2048,
+            chunk_count=1,
+            remote_calls=5,
+            mode="full",
+            discovery_duration=0.1,
+            change_detection_duration=0.2,
+            archive_creation_duration=0.3,
+            context_setup_duration=0.4,
+            transfer_duration=0.5,
+            remote_apply_duration=0.6,
+            path_setup_duration=0.7,
         )
+        assert stats.changed_files == 3
+        assert stats.changed_size == 1024
+        assert stats.deleted_files == 2
+        assert stats.skipped_files == 10
+        assert stats.total_files == 13
+        assert stats.upload_duration == 1.25
+        assert stats.total_duration == 2.5
+        assert stats.sync_duration == 1.5
+        assert stats.cluster_zip_path == "/tmp/test/project.zip"
+        assert stats.source_size == 4096
+        assert stats.archive_size == 2048
+        assert stats.chunk_count == 1
+        assert stats.remote_calls == 5
+        assert stats.mode == "full"
+        assert stats.discovery_duration == 0.1
+        assert stats.change_detection_duration == 0.2
+        assert stats.archive_creation_duration == 0.3
+        assert stats.context_setup_duration == 0.4
+        assert stats.transfer_duration == 0.5
+        assert stats.remote_apply_duration == 0.6
+        assert stats.path_setup_duration == 0.7
+
+    def test_preserves_positional_constructor_contract(self) -> None:
+        """The original six positional fields remain in their existing order."""
+        stats = SyncStats(3, 1024, 10, 13, 1.5, "/tmp/test/project.zip")
+
         assert stats.changed_files == 3
         assert stats.changed_size == 1024
         assert stats.skipped_files == 10
         assert stats.total_files == 13
         assert stats.sync_duration == 1.5
         assert stats.cluster_zip_path == "/tmp/test/project.zip"
+        assert stats.deleted_files == 0
+        assert stats.upload_duration == 0.0
+        assert stats.total_duration == 0.0
 
 
 class TestDefaultExcludePatterns:
@@ -1599,6 +1734,59 @@ class TestCommandAPITransfer:
             for command in chunk_commands
         ]
         assert b"".join(base64.b64decode(chunk) for chunk in encoded_chunks) == payload
+
+    def test_sync_records_phase_diagnostics(
+        self, mock_file_sync: FileSync, tmp_path: Path
+    ) -> None:
+        """Sync reports phase timings and transfer counters for benchmarks."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("print('test')\n")
+        payload = b"z" * (COMMAND_API_BINARY_CHUNK_SIZE + 23)
+        mock_file_sync.config.base_path = tmp_path
+
+        fake_cache = MagicMock()
+        fake_cache.get_changed_files.return_value = (
+            [test_file],
+            SyncStats(changed_files=1, changed_size=test_file.stat().st_size),
+            {"test.py": "hash"},
+        )
+        fake_cache.get_deleted_files.return_value = ["deleted.py"]
+
+        mock_file_sync._get_all_files = Mock(return_value=[test_file])
+        mock_file_sync._get_file_cache = Mock(return_value=fake_cache)
+        mock_file_sync._create_zip = Mock(return_value=payload)
+
+        result = MagicMock()
+        from databricks.sdk.service import compute
+
+        result.status = compute.CommandStatus.FINISHED
+        result.results = MagicMock()
+        result.results.cause = None
+        result.results.data = "/tmp/jupyter_databricks_kernel_test-session"
+        execute_response = mock_file_sync.client.command_execution.execute.return_value
+        execute_response.result.return_value = result
+
+        stats = mock_file_sync.sync()
+
+        assert stats.total_files == 1
+        assert stats.changed_files == 1
+        assert stats.deleted_files == 1
+        assert stats.source_size == test_file.stat().st_size
+        assert stats.archive_size == len(payload)
+        assert stats.chunk_count == count_command_api_base64_chunks(len(payload))
+        assert stats.remote_calls == stats.chunk_count + 2
+        assert stats.mode == "full"
+        assert stats.cluster_zip_path.endswith("/project.zip")
+        assert stats.upload_duration >= 0
+        assert stats.total_duration == stats.upload_duration
+        assert stats.sync_duration >= 0
+        assert stats.sync_duration == stats.total_duration
+        assert stats.discovery_duration >= 0
+        assert stats.change_detection_duration >= 0
+        assert stats.archive_creation_duration >= 0
+        assert stats.context_setup_duration >= 0
+        assert stats.transfer_duration >= 0
+        fake_cache.remove.assert_called_once_with("deleted.py")
 
     def test_executor_context_sharing(
         self, mock_file_sync: FileSync, tmp_path: Path

@@ -173,6 +173,21 @@ class SyncStats:
     total_files: int = 0
     sync_duration: float = 0.0
     cluster_zip_path: str = ""
+    deleted_files: int = 0
+    upload_duration: float = 0.0
+    total_duration: float = 0.0
+    source_size: int = 0
+    archive_size: int = 0
+    chunk_count: int = 0
+    remote_calls: int = 0
+    mode: str = "full"
+    discovery_duration: float = 0.0
+    change_detection_duration: float = 0.0
+    archive_creation_duration: float = 0.0
+    context_setup_duration: float = 0.0
+    transfer_duration: float = 0.0
+    remote_apply_duration: float = 0.0
+    path_setup_duration: float = 0.0
 
 
 @dataclass
@@ -944,26 +959,36 @@ class FileSync:
 
         from databricks.sdk.service import compute
 
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Get all files and validate sizes (also returns size info for reuse)
         source_path = self._get_source_path()
 
+        discovery_start = time.perf_counter()
         all_files = self._get_all_files(on_progress=on_progress)
         file_sizes = self._validate_sizes(all_files, source_path)
+        discovery_duration = time.perf_counter() - discovery_start
         total_files = len(all_files)
 
         # Get changed files and statistics (reuse size info to avoid duplicate stat())
         file_cache = self._get_file_cache()
+        change_detection_start = time.perf_counter()
         changed_files, stats, computed_hashes = file_cache.get_changed_files(
             all_files, file_sizes, on_progress=on_progress
         )
+        stats.change_detection_duration = time.perf_counter() - change_detection_start
+        stats.discovery_duration = discovery_duration
+        stats.total_files = total_files
+        stats.source_size = sum(file_sizes.values())
 
         if on_progress:
             on_progress(f"Creating archive ({total_files} files)...")
 
         # Create zip archive (reuse file list to avoid duplicate os.walk)
+        archive_start = time.perf_counter()
         zip_data = self._create_zip(all_files)
+        stats.archive_creation_duration = time.perf_counter() - archive_start
+        stats.archive_size = len(zip_data)
 
         if on_progress:
             on_progress(f"Uploading ({self._format_size(len(zip_data))})...")
@@ -972,8 +997,10 @@ class FileSync:
         client = self._ensure_client()
 
         num_chunks = count_command_api_base64_chunks(len(zip_data))
+        stats.chunk_count = num_chunks
 
         # Use executor's context if provided, otherwise create minimal execution context
+        context_setup_start = time.perf_counter()
         context_id: str | None
         if executor and executor.context_id:
             context_id = executor.context_id
@@ -982,6 +1009,7 @@ class FileSync:
                 cluster_id=self.config.cluster_id,
                 language=compute.Language.PYTHON,
             ).result()
+            stats.remote_calls += 1
             self._command_context_id = response.id if response else None
             context_id = self._command_context_id
         else:
@@ -1013,6 +1041,7 @@ print(target_dir)
             language=compute.Language.PYTHON,
             command=mkdir_code,
         ).result(timeout=timedelta(minutes=5))
+        stats.remote_calls += 1
 
         if result and result.results and result.results.cause:
             raise RuntimeError(f"Failed to create directory: {result.results.cause}")
@@ -1031,8 +1060,10 @@ print(target_dir)
             raise ValueError(f"Invalid directory path from cluster: {actual_dir}")
         cluster_zip_path = f"{actual_dir}/project.zip"
         self._cluster_zip_path = cluster_zip_path
+        stats.context_setup_duration = time.perf_counter() - context_setup_start
 
         # Send chunks via Command API — decode directly on cluster.
+        transfer_start = time.perf_counter()
         for i, chunk_b64 in enumerate(iter_command_api_base64_chunks(zip_data)):
             mode = "wb" if i == 0 else "ab"
             code = build_command_api_chunk_write_command(
@@ -1044,6 +1075,7 @@ print(target_dir)
                 language=compute.Language.PYTHON,
                 command=code,
             ).result(timeout=timedelta(minutes=5))
+            stats.remote_calls += 1
 
             if result and result.results and result.results.cause:
                 raise RuntimeError(
@@ -1057,9 +1089,11 @@ print(target_dir)
 
             if on_progress:
                 on_progress(f"Transferred chunk {i + 1}/{num_chunks}...")
+        stats.transfer_duration = time.perf_counter() - transfer_start
 
         # Remove deleted files from cache
         deleted_files = file_cache.get_deleted_files(all_files)
+        stats.deleted_files = len(deleted_files)
         for rel_path in deleted_files:
             file_cache.remove(rel_path)
 
@@ -1068,17 +1102,39 @@ print(target_dir)
         file_cache.save()
         self._synced = True
 
-        # Calculate duration and set path
-        stats.sync_duration = time.time() - start_time
+        # Calculate upload duration and set path. sync_duration remains as a
+        # backward-compatible alias for the total duration of the returned
+        # operation; for sync(), the operation is upload-only.
+        stats.upload_duration = time.perf_counter() - start_time
+        stats.total_duration = stats.upload_duration
+        stats.sync_duration = stats.total_duration
         stats.cluster_zip_path = cluster_zip_path
 
         # Log statistics
         logger.info(
-            "Sync complete: %d changed (%s), %d skipped, %.1fs",
+            "Sync upload complete: %d changed (%s), %d deleted, %d skipped, "
+            "%s archive, %d chunks, %d remote calls, %.1fs",
             stats.changed_files,
             self._format_size(stats.changed_size),
+            stats.deleted_files,
             stats.skipped_files,
-            stats.sync_duration,
+            self._format_size(stats.archive_size),
+            stats.chunk_count,
+            stats.remote_calls,
+            stats.upload_duration,
+        )
+        logger.debug(
+            "Sync upload diagnostics: discovery=%.3fs change_detection=%.3fs "
+            "archive_creation=%.3fs context_setup=%.3fs transfer=%.3fs "
+            "source_size=%s archive_size=%s mode=%s",
+            stats.discovery_duration,
+            stats.change_detection_duration,
+            stats.archive_creation_duration,
+            stats.context_setup_duration,
+            stats.transfer_duration,
+            self._format_size(stats.source_size),
+            self._format_size(stats.archive_size),
+            stats.mode,
         )
 
         return stats
@@ -1110,21 +1166,53 @@ print(target_dir)
         sharing the same upload, extraction, working-directory, and sys.path
         setup lifecycle.
         """
+        start_time = time.perf_counter()
         if not self.needs_sync():
             return None
 
         if executor.context_id is None:
+            context_setup_start = time.perf_counter()
             executor.create_context()
+            initial_context_setup_duration = time.perf_counter() - context_setup_start
+        else:
+            initial_context_setup_duration = 0.0
 
         stats = self.sync(on_progress=on_progress, executor=executor)
+        if initial_context_setup_duration:
+            stats.context_setup_duration += initial_context_setup_duration
+            stats.remote_calls += 1
         for description, code in self.get_setup_steps(stats.cluster_zip_path):
+            setup_start = time.perf_counter()
             result = (
                 execute_setup(description, code)
                 if execute_setup is not None
                 else executor.execute(code, allow_reconnect=False)
             )
+            setup_duration = time.perf_counter() - setup_start
+            stats.remote_calls += 1
+            if description == "Configuring paths":
+                stats.path_setup_duration += setup_duration
+            else:
+                stats.remote_apply_duration += setup_duration
             if result.status != "ok":
                 raise SetupError(description, result.error)
+        stats.total_duration = time.perf_counter() - start_time
+        stats.sync_duration = stats.total_duration
+        logger.info(
+            "Sync setup complete: remote_apply=%.3fs path_setup=%.3fs "
+            "%d remote calls, %.1fs total",
+            stats.remote_apply_duration,
+            stats.path_setup_duration,
+            stats.remote_calls,
+            stats.total_duration,
+        )
+        logger.debug(
+            "Sync setup diagnostics: remote_apply=%.3fs path_setup=%.3fs "
+            "remote_calls=%d",
+            stats.remote_apply_duration,
+            stats.path_setup_duration,
+            stats.remote_calls,
+        )
         return stats
 
     def get_setup_steps(self, cluster_zip_path: str) -> list[tuple[str, str]]:
