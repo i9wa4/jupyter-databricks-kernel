@@ -182,10 +182,6 @@ class DatabricksKernel(Kernel):
             return True, 0.0, 0
         executor = self.executor
 
-        if not self.file_sync.needs_sync():
-            logger.debug("File sync skipped: no changes detected")
-            return True, 0.0, 0
-
         try:
             logger.debug("Starting file sync")
             sync_start = time.time()

@@ -22,6 +22,7 @@ from jupyter_databricks_kernel.sync import (
     FileSizeError,
     FileSync,
     SetupError,
+    SyncPlan,
     SyncStats,
     build_command_api_archive_cleanup_command,
     build_command_api_chunk_write_command,
@@ -776,6 +777,14 @@ class TestFormatSize:
 class TestSyncAndSetup:
     """Tests for the shared upload and remote setup lifecycle."""
 
+    @staticmethod
+    def _changed_plan(stats: SyncStats) -> SyncPlan:
+        """Build the smallest plan that requires an apply operation."""
+        changed_file = Path("changed.py")
+        return SyncPlan(
+            [changed_file], {changed_file: 1}, [changed_file], [], {}, stats
+        )
+
     def test_reuses_executor_for_upload_and_setup(self, file_sync: FileSync) -> None:
         """One executor context performs both project upload and setup steps."""
         executor = MagicMock(context_id="context-id")
@@ -789,9 +798,12 @@ class TestSyncAndSetup:
             ("Configuring paths", "sys.path.insert(0, '/tmp/project')"),
         ]
         executor.execute.return_value = MagicMock(status="ok")
+        plan = self._changed_plan(stats)
 
         with (
-            patch.object(file_sync, "needs_sync", return_value=True),
+            patch.object(
+                file_sync, "create_sync_plan", return_value=plan
+            ) as create_plan,
             patch.object(file_sync, "sync", return_value=stats) as sync,
             patch.object(file_sync, "get_setup_steps", return_value=setup_steps),
             patch(
@@ -802,7 +814,8 @@ class TestSyncAndSetup:
             result = file_sync.sync_and_setup(executor)
 
         assert result is stats
-        sync.assert_called_once_with(on_progress=None, executor=executor)
+        create_plan.assert_called_once_with(on_progress=None)
+        sync.assert_called_once_with(on_progress=None, executor=executor, plan=plan)
         executor.create_context.assert_not_called()
         assert executor.execute.call_count == 2
         executor.execute.assert_any_call("extract()", allow_reconnect=False)
@@ -822,9 +835,10 @@ class TestSyncAndSetup:
         """End-to-end setup stats include an executor context created up front."""
         executor = MagicMock(context_id=None)
         stats = SyncStats(cluster_zip_path="/tmp/project.zip", remote_calls=2)
+        plan = self._changed_plan(stats)
 
         with (
-            patch.object(file_sync, "needs_sync", return_value=True),
+            patch.object(file_sync, "create_sync_plan", return_value=plan),
             patch.object(file_sync, "sync", return_value=stats),
             patch.object(file_sync, "get_setup_steps", return_value=[]),
             patch(
@@ -842,22 +856,23 @@ class TestSyncAndSetup:
         assert stats.total_duration == 1.0
         assert stats.sync_duration == 1.0
 
-    def test_total_duration_includes_needs_sync_preflight(
-        self, file_sync: FileSync
-    ) -> None:
-        """End-to-end setup timing starts before sync preflight checks."""
+    def test_total_duration_includes_plan_creation(self, file_sync: FileSync) -> None:
+        """End-to-end setup timing starts before one plan creation."""
         executor = MagicMock(context_id="context-id")
         stats = SyncStats(cluster_zip_path="/tmp/project.zip", remote_calls=2)
 
-        def needs_sync_with_preflight() -> bool:
+        def create_plan_with_preflight(
+            on_progress: object = None,
+        ) -> SyncPlan:
+            assert on_progress is None
             preflight_start = time.perf_counter()
             preflight_end = time.perf_counter()
             assert preflight_end - preflight_start == 1.0
-            return True
+            return self._changed_plan(stats)
 
         with (
             patch.object(
-                file_sync, "needs_sync", side_effect=needs_sync_with_preflight
+                file_sync, "create_sync_plan", side_effect=create_plan_with_preflight
             ),
             patch.object(file_sync, "sync", return_value=stats),
             patch.object(file_sync, "get_setup_steps", return_value=[]),
@@ -878,9 +893,10 @@ class TestSyncAndSetup:
     ) -> None:
         """A clean project does not create a context or execute setup code."""
         executor = MagicMock()
+        plan = SyncPlan([], {}, [], [], {}, SyncStats())
 
         with (
-            patch.object(file_sync, "needs_sync", return_value=False),
+            patch.object(file_sync, "create_sync_plan", return_value=plan),
             patch.object(file_sync, "sync") as sync,
         ):
             result = file_sync.sync_and_setup(executor)
@@ -890,6 +906,80 @@ class TestSyncAndSetup:
         executor.create_context.assert_not_called()
         executor.execute.assert_not_called()
 
+    def test_warm_cache_fresh_instance_applies_once_then_skips(
+        self, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """A fresh process applies even when its persistent cache is warm."""
+        mock_config.base_path = tmp_path
+        mock_config.sync.source = "."
+        mock_config.sync.exclude = []
+        source_file = tmp_path / "project.py"
+        source_file.write_text("value = 1\n")
+        cache_home = tmp_path.parent / f"{tmp_path.name}-cache"
+
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": str(cache_home)}):
+            warm_cache = FileCache(tmp_path)
+            warm_cache.update([source_file])
+            warm_cache.save()
+
+            fresh_sync = FileSync(mock_config, "fresh-session")
+            executor = MagicMock(context_id="context-id")
+            executor.execute.return_value = MagicMock(status="ok")
+            stats = SyncStats(cluster_zip_path="/tmp/project.zip")
+
+            def apply_once(**_: object) -> SyncStats:
+                fresh_sync._synced = True
+                return stats
+
+            with (
+                patch.object(fresh_sync, "sync", side_effect=apply_once) as sync,
+                patch.object(
+                    fresh_sync,
+                    "get_setup_steps",
+                    return_value=[("Configuring paths", "setup()")],
+                ),
+            ):
+                first_result = fresh_sync.sync_and_setup(executor)
+                second_result = fresh_sync.sync_and_setup(executor)
+
+        assert first_result is stats
+        assert second_result is None
+        sync.assert_called_once()
+        executor.execute.assert_called_once_with("setup()", allow_reconnect=False)
+
+    def test_sync_plan_freezes_decision_data(self) -> None:
+        """A plan cannot be changed after it is created."""
+        changed_file = Path("changed.py")
+        files = [changed_file]
+        file_sizes = {changed_file: 1}
+        changed_files = [changed_file]
+        deleted_files = ["deleted.py"]
+        computed_hashes = {"changed.py": "hash"}
+
+        plan = SyncPlan(
+            files,
+            file_sizes,
+            changed_files,
+            deleted_files,
+            computed_hashes,
+            SyncStats(),
+        )
+        files.clear()
+        file_sizes.clear()
+        changed_files.clear()
+        deleted_files.clear()
+        computed_hashes.clear()
+
+        assert plan.all_files == (changed_file,)
+        assert dict(plan.file_sizes) == {changed_file: 1}
+        assert plan.changed_files == (changed_file,)
+        assert plan.deleted_files == ("deleted.py",)
+        assert dict(plan.computed_hashes) == {"changed.py": "hash"}
+        with pytest.raises(TypeError):
+            plan.file_sizes[changed_file] = 2
+        with pytest.raises(AttributeError):
+            plan.changed_files += (Path("other.py"),)
+
     def test_reports_the_failed_remote_setup_step(self, file_sync: FileSync) -> None:
         """Setup errors identify the step that did not complete."""
         executor = MagicMock(context_id="context-id")
@@ -897,9 +987,10 @@ class TestSyncAndSetup:
         executor.execute.return_value = MagicMock(
             status="error", error="permission denied"
         )
+        plan = self._changed_plan(stats)
 
         with (
-            patch.object(file_sync, "needs_sync", return_value=True),
+            patch.object(file_sync, "create_sync_plan", return_value=plan),
             patch.object(file_sync, "sync", return_value=stats),
             patch.object(
                 file_sync,
@@ -1788,6 +1879,37 @@ class TestCommandAPITransfer:
         assert stats.transfer_duration >= 0
         fake_cache.remove.assert_called_once_with("deleted.py")
 
+    def test_direct_sync_preserves_disabled_setting_compatibility(
+        self, mock_file_sync: FileSync
+    ) -> None:
+        """Direct sync retains its historical enabled-setting-independent apply."""
+        mock_file_sync.config.sync.enabled = False
+        plan = SyncPlan([], {}, [], [], {}, SyncStats())
+        mock_file_sync.client = MagicMock()
+
+        result = MagicMock()
+        from databricks.sdk.service import compute
+
+        result.status = compute.CommandStatus.FINISHED
+        result.results = MagicMock(cause=None)
+        result.results.data = "/tmp/jupyter_databricks_kernel_test-session"
+        execute_response = mock_file_sync.client.command_execution.execute.return_value
+        execute_response.result.return_value = result
+        create_response = mock_file_sync.client.command_execution.create.return_value
+        create_response.result.return_value.id = "context-id"
+
+        with (
+            patch.object(mock_file_sync, "create_sync_plan", return_value=None),
+            patch.object(
+                mock_file_sync, "_build_sync_plan", return_value=plan
+            ) as build,
+            patch.object(mock_file_sync, "_create_zip", return_value=b"zip"),
+        ):
+            mock_file_sync.sync()
+
+        build.assert_called_once_with(on_progress=None)
+        assert mock_file_sync.client.command_execution.execute.called
+
     def test_executor_context_sharing(
         self, mock_file_sync: FileSync, tmp_path: Path
     ) -> None:
@@ -1818,6 +1940,14 @@ class TestCommandAPITransfer:
 
         # Mock _get_all_files to return our test file
         mock_file_sync._get_all_files = Mock(return_value=[test_file])
+        fake_cache = MagicMock()
+        fake_cache.get_changed_files.return_value = (
+            [test_file],
+            SyncStats(changed_files=1, changed_size=test_file.stat().st_size),
+            {"test.py": "hash"},
+        )
+        fake_cache.get_deleted_files.return_value = ["deleted.py"]
+        mock_file_sync._get_file_cache = Mock(return_value=fake_cache)
 
         # Execute sync with executor parameter
         try:
@@ -1880,6 +2010,14 @@ print(target_dir)
 
         # Mock _get_all_files to return our test file
         mock_file_sync._get_all_files = Mock(return_value=[test_file])
+        fake_cache = MagicMock()
+        fake_cache.get_changed_files.return_value = (
+            [test_file],
+            SyncStats(changed_files=1, changed_size=test_file.stat().st_size),
+            {"test.py": "hash"},
+        )
+        fake_cache.get_deleted_files.return_value = ["deleted.py"]
+        mock_file_sync._get_file_cache = Mock(return_value=fake_cache)
 
         # Execute sync should raise error due to cause
         with pytest.raises(Exception) as exc_info:
@@ -1888,3 +2026,6 @@ print(target_dir)
         # Verify error message contains cause information
         error_msg = str(exc_info.value).lower()
         assert "cause" in error_msg or "error" in error_msg
+        fake_cache.remove.assert_not_called()
+        fake_cache.update.assert_not_called()
+        fake_cache.save.assert_not_called()

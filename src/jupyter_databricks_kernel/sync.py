@@ -18,10 +18,11 @@ import stat
 import tempfile
 import time
 import zipfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import pathspec
@@ -188,6 +189,39 @@ class SyncStats:
     transfer_duration: float = 0.0
     remote_apply_duration: float = 0.0
     path_setup_duration: float = 0.0
+
+
+@dataclass(frozen=True)
+class SyncPlan:
+    """One local discovery/change-analysis result for a sync attempt."""
+
+    all_files: tuple[Path, ...]
+    file_sizes: Mapping[Path, int]
+    changed_files: tuple[Path, ...]
+    deleted_files: tuple[str, ...]
+    computed_hashes: Mapping[str, str]
+    stats: SyncStats
+    initial_apply_required: bool = False
+
+    def __post_init__(self) -> None:
+        """Defensively freeze the decision data retained between plan and apply."""
+        object.__setattr__(self, "all_files", tuple(self.all_files))
+        object.__setattr__(self, "file_sizes", MappingProxyType(dict(self.file_sizes)))
+        object.__setattr__(self, "changed_files", tuple(self.changed_files))
+        object.__setattr__(self, "deleted_files", tuple(self.deleted_files))
+        object.__setattr__(
+            self, "computed_hashes", MappingProxyType(dict(self.computed_hashes))
+        )
+
+    @property
+    def has_changes(self) -> bool:
+        """Whether cached local content differs from the previous attempt."""
+        return bool(self.changed_files or self.deleted_files)
+
+    @property
+    def requires_apply(self) -> bool:
+        """Whether this attempt must upload and prepare the remote project."""
+        return self.initial_apply_required or self.has_changes
 
 
 @dataclass
@@ -486,13 +520,16 @@ class FileCache:
         return changed, stats, computed_hashes
 
     def update(
-        self, files: list[Path], computed_hashes: dict[str, str] | None = None
+        self,
+        files: Sequence[Path],
+        computed_hashes: Mapping[str, str] | None = None,
     ) -> None:
         """Update cache with current file hashes.
 
         Args:
-            files: List of file paths to update.
-            computed_hashes: Optional dict of pre-computed hashes (rel_path -> hash).
+            files: File paths to update.
+            computed_hashes: Optional mapping of pre-computed hashes
+                (rel_path -> hash).
                 If provided, hashes are reused instead of recomputing.
         """
         for file_path in files:
@@ -804,22 +841,55 @@ class FileSync:
         """
         if not self.config.sync.enabled:
             return False
-
-        # Always sync on first run
         if not self._synced:
             return True
 
-        # Check if any files have been modified or deleted using hash comparison
         all_files = self._get_all_files()
         file_cache = self._get_file_cache()
+        return bool(
+            file_cache.get_deleted_files(all_files)
+            or file_cache.has_any_changed(all_files)
+        )
 
-        # Early return: check for deleted files first (cheap operation)
+    def create_sync_plan(
+        self, on_progress: SyncProgressCallback | None = None
+    ) -> SyncPlan | None:
+        """Discover and analyse files once for a possible sync attempt."""
+        if not self.config.sync.enabled:
+            return None
+
+        return self._build_sync_plan(on_progress=on_progress)
+
+    def _build_sync_plan(
+        self, on_progress: SyncProgressCallback | None = None
+    ) -> SyncPlan:
+        """Build a plan without applying the public enabled-setting guard."""
+
+        source_path = self._get_source_path()
+        discovery_start = time.perf_counter()
+        all_files = self._get_all_files(on_progress=on_progress)
+        file_sizes = self._validate_sizes(all_files, source_path)
+        discovery_duration = time.perf_counter() - discovery_start
+
+        file_cache = self._get_file_cache()
+        change_detection_start = time.perf_counter()
+        changed_files, stats, computed_hashes = file_cache.get_changed_files(
+            all_files, file_sizes, on_progress=on_progress
+        )
+        stats.change_detection_duration = time.perf_counter() - change_detection_start
+        stats.discovery_duration = discovery_duration
+        stats.total_files = len(all_files)
+        stats.source_size = sum(file_sizes.values())
         deleted_files = file_cache.get_deleted_files(all_files)
-        if deleted_files:
-            return True
-
-        # Early return: stop at first changed file
-        return file_cache.has_any_changed(all_files)
+        return SyncPlan(
+            tuple(all_files),
+            file_sizes,
+            tuple(changed_files),
+            tuple(deleted_files),
+            computed_hashes,
+            stats,
+            initial_apply_required=not self._synced,
+        )
 
     def _validate_sizes(self, files: list[Path], source_path: Path) -> dict[Path, int]:
         """Validate file sizes against configured limits.
@@ -872,11 +942,11 @@ class FileSync:
 
         return file_sizes
 
-    def _create_zip(self, files: list[Path] | None = None) -> bytes:
+    def _create_zip(self, files: Sequence[Path] | None = None) -> bytes:
         """Create a zip archive of the source directory.
 
         Args:
-            files: Optional list of file paths to include. If None, uses os.walk
+            files: Optional sequence of file paths to include. If None, uses os.walk
                 to discover files (for backward compatibility).
 
         Returns:
@@ -942,6 +1012,7 @@ class FileSync:
         self,
         on_progress: SyncProgressCallback | None = None,
         executor: DatabricksExecutor | None = None,
+        plan: SyncPlan | None = None,
     ) -> SyncStats:
         """Synchronize files to Databricks cluster.
 
@@ -961,25 +1032,17 @@ class FileSync:
 
         start_time = time.perf_counter()
 
-        # Get all files and validate sizes (also returns size info for reuse)
-        source_path = self._get_source_path()
-
-        discovery_start = time.perf_counter()
-        all_files = self._get_all_files(on_progress=on_progress)
-        file_sizes = self._validate_sizes(all_files, source_path)
-        discovery_duration = time.perf_counter() - discovery_start
-        total_files = len(all_files)
-
-        # Get changed files and statistics (reuse size info to avoid duplicate stat())
+        if plan is None:
+            plan = self.create_sync_plan(on_progress=on_progress)
+        if plan is None:
+            # Direct sync historically ignored ``sync.enabled``. Keep that
+            # compatibility while sync_and_setup() owns the disabled/no-op gate.
+            plan = self._build_sync_plan(on_progress=on_progress)
+        all_files = plan.all_files
+        stats = plan.stats
+        computed_hashes = plan.computed_hashes
         file_cache = self._get_file_cache()
-        change_detection_start = time.perf_counter()
-        changed_files, stats, computed_hashes = file_cache.get_changed_files(
-            all_files, file_sizes, on_progress=on_progress
-        )
-        stats.change_detection_duration = time.perf_counter() - change_detection_start
-        stats.discovery_duration = discovery_duration
-        stats.total_files = total_files
-        stats.source_size = sum(file_sizes.values())
+        total_files = len(all_files)
 
         if on_progress:
             on_progress(f"Creating archive ({total_files} files)...")
@@ -1092,9 +1155,8 @@ print(target_dir)
         stats.transfer_duration = time.perf_counter() - transfer_start
 
         # Remove deleted files from cache
-        deleted_files = file_cache.get_deleted_files(all_files)
-        stats.deleted_files = len(deleted_files)
-        for rel_path in deleted_files:
+        stats.deleted_files = len(plan.deleted_files)
+        for rel_path in plan.deleted_files:
             file_cache.remove(rel_path)
 
         # Update cache (reuse computed hashes to avoid recomputation)
@@ -1167,7 +1229,8 @@ print(target_dir)
         setup lifecycle.
         """
         start_time = time.perf_counter()
-        if not self.needs_sync():
+        plan = self.create_sync_plan(on_progress=on_progress)
+        if plan is None or not plan.requires_apply:
             return None
 
         if executor.context_id is None:
@@ -1177,7 +1240,7 @@ print(target_dir)
         else:
             initial_context_setup_duration = 0.0
 
-        stats = self.sync(on_progress=on_progress, executor=executor)
+        stats = self.sync(on_progress=on_progress, executor=executor, plan=plan)
         if initial_context_setup_duration:
             stats.context_setup_duration += initial_context_setup_duration
             stats.remote_calls += 1
