@@ -18,9 +18,7 @@ updates:
       prefix: "chore(deps)"
 
   - package-ecosystem: "uv"
-    directories:
-      - "/"
-      - "/*"
+    directory: "/"
     schedule:
       interval: "daily"
     cooldown:
