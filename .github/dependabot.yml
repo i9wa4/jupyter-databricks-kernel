@@ -10,20 +10,27 @@ updates:
       github-actions:
         patterns:
           - "*"
+      github-actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
     commit-message:
       prefix: "chore(deps)"
 
   - package-ecosystem: "uv"
-    directory: "/"
+    directories:
+      - "/"
+      - "/*"
     schedule:
       interval: "daily"
     cooldown:
       default-days: 7
-      semver-major-days: 14
-      semver-minor-days: 7
-      semver-patch-days: 3
     groups:
       uv:
+        patterns:
+          - "*"
+      uv-security:
+        applies-to: security-updates
         patterns:
           - "*"
     commit-message:
