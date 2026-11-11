@@ -40,5 +40,9 @@ updates:
       interval: "daily"
     cooldown:
       default-days: 7
+    groups:
+      nix-inputs:
+        patterns:
+          - "*"
     commit-message:
       prefix: "chore(deps)"
